@@ -74,7 +74,6 @@ response = client.responses.create(
     instructions="Tu esi profesionāls būvdarbu tāmētājs Latvijā. Atbildi latviešu valodā.",
     input=prompt
 )
-        )
 
         return jsonify({
             "success": True,
