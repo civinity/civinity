@@ -34,7 +34,7 @@ def research_prices(client, description):
             "If only range available leave price_eur null. If unverified, OMIT it. Max 35 sources. Include at least two independently published offers per major work/material where possible. "
             "Today: "+today+". Job: "+description[:2800])
     try:
-        result=client.responses.create(model=os.getenv('PRICE_RESEARCH_MODEL','gpt-4.1-mini'),tools=[{'type':'web_search_preview','search_context_size':'high'}],input=prompt,timeout=45)
+        result=client.with_options(max_retries=0).responses.create(model=os.getenv('PRICE_RESEARCH_MODEL','gpt-4.1-mini'),tools=[{'type':'web_search_preview','search_context_size':'high'}],input=prompt,timeout=18)
         raw=result.output_text.strip();start=raw.find('{');end=raw.rfind('}')
         obj=json.loads(raw[start:end+1]) if start>=0 and end>start else {}
         sources=[]
@@ -119,11 +119,11 @@ Ja ir foto: analizē redzamos elementus, bet neapgalvo neredzamus defektus un NE
 Cenu pamatā OBLIGĀTI izmanto pievienotos meklēšanas avotus, ja tie atbilst darbam, vienībai un komplektācijai. Avotu cenu diapazoniem izvēlies low=apakšējo, mid=tipisko/mediānu, high=augšējo robežu, nevis vienkāršu procentu reizinātāju. Atsevišķi pārbaudi, vai avota cena ir ar PVN; tāmei jābūt bez PVN. Ja avotu nav, cenas ir tikai AI provizoriskas un nedrīkst uzdot par pārbaudītām. Nepieciešamos darbus un materiālus uzskaiti arī bez avotiem, norādot nenoteiktību. Cenas labor/material/machine ir atsevišķas VIENĪBAS provizoriskas cenas EUR bez PVN. Darba pozīcijās pārsvarā labor, materiālu pozīcijās pārsvarā material. Vienu izmaksu nedrīkst ieskaitīt divreiz. Izvēlies ticamus Latvijas tirgus segmenta cenu pieņēmumus, atsevišķi materiālus un darbu, neizmanto nepamatoti zemas simboliskas cenas. Ja nav aktuālu datu, to skaidri atzīmē. Neapgalvo, ka cenas ir pārbaudītas tirgū. Ja cenu nevar pamatoti novērtēt, ievadi 0 un norādi precizējumu. qty=0 tikai tad, ja pat provizorisks apjoms nav iespējams. Neizdomā apsekošanas datumu vai faktu, ka apsekošana ir veikta.
 Katrai rindai pievieno source_ids ar tikai tieši atbilstošajiem avotu ID (piem. ["S1","S3"]) un TIKAI tad, ja avota mērvienība sakrīt ar rindas mērvienību un darba/materiāla veids sakrīt. Ja nav tiešas atbilstības, source_ids=[]. Atgriez JSON ar struktūru: {"summary":"...", "rows":[{"name":"...", "unit":"gab.", "qty":1, "labor":0, "material":0, "machine":0, "category":"darbi vai materiali vai mehanismi", "source_ids":[]}], "act":{"observations":"...", "defects":"...", "recommendations":"...", "limitations":"..."}, "assumptions":["..."], "missing_data":["..."]}. Atgriez pēc iespējas konkrētas pozīcijas un materiālus; PVN 21% rēķina programma.'''
     try:
-        client = OpenAI(api_key=key, timeout=62)
+        client = OpenAI(api_key=key, timeout=75, max_retries=0)
         sources=research_prices(client,description)
-        evidence=json.dumps(sources,ensure_ascii=False)[:19000]
+        evidence=json.dumps(sources,ensure_ascii=False)[:10500]
         content[0]['text'] += '\nPĀRBAUDĀMIE CENU AVOTI (no tīmekļa meklēšanas): '+evidence+'\nJa avotu nav vai tie nav pietiekami, cenas atzīmē kā NEPĀRBAUDĪTAS un neapgalvo, ka tās ir tirgus vidējās.'
-        res = client.chat.completions.create(model=os.getenv('OPENAI_MODEL', 'gpt-4.1-mini'), messages=[{'role':'system','content':instructions},{'role':'user','content':content}], response_format={'type':'json_object'},temperature=0.15)
+        res = client.chat.completions.create(model=os.getenv('OPENAI_MODEL', 'gpt-4.1-mini'), messages=[{'role':'system','content':instructions},{'role':'user','content':content}], response_format={'type':'json_object'},temperature=0.15, max_tokens=6500)
         obj = json.loads(res.choices[0].message.content)
         if not isinstance(obj.get('rows'), list) or not isinstance(obj.get('act'), dict):
             raise ValueError('AI returned unexpected structure')
@@ -136,9 +136,10 @@ Katrai rindai pievieno source_ids ar tikai tieši atbilstošajiem avotu ID (piem
             rows.append(dict(name=str(r.get('name') or '')[:300],unit=str(r.get('unit') or 'gab.')[:20],qty=num('qty'),labor=num('labor'),material=num('material'),machine=num('machine'),category=str(r.get('category') or 'darbi')[:30],source_ids=r.get('source_ids') or []))
         pricing_report=apply_evidence_prices(rows,sources,price_level)
         return jsonify(pricing_report=pricing_report,success=True,estimate=obj.get('summary',''),rows=rows,act=obj['act'],assumptions=obj.get('assumptions',[]),missing_data=obj.get('missing_data',[]),price_sources=sources,price_verified=False,price_research_status="web_search_based_not_independently_verified",price_checked_at=datetime.now().isoformat(timespec='seconds'),price_level=price_level)
-    except Exception:
+    except Exception as exc:
         app.logger.exception('AI estimate failed')
-        return jsonify(error='AI ģenerēšana neizdevās. Pārbaudiet Render Logs.'),502
+        kind=type(exc).__name__
+        return jsonify(error='AI tāmes izveide neizdevās ('+kind+'). Pārbaudiet Render Logs.', error_type=kind),502
 
 # Export actual styled Excel and PDF, not a CSV renamed to .xlsx.
 def safe(v):return str(v or '').strip()
