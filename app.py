@@ -2,6 +2,8 @@ import base64
 import io
 import json
 import logging
+import statistics
+from urllib.parse import urlparse
 import os
 from datetime import datetime
 from xml.sax.saxutils import escape
@@ -17,6 +19,80 @@ CORS(app, resources={r'/api/*': {'origins': os.getenv('FRONTEND_URL', 'https://c
 def home():
     return jsonify(status='online', service='CIVINITY AI BuvTame API', version='3.0')
 
+# Web price evidence is researched for each estimate. Never label model guesses as verified.
+PRICE_SITES = ['baufonds.lv','kalkulatori.meistarpro.lv','getapro.lv','kursi.lv','ksenukai.lv','online.depo.lv','buvserviss.lv','remontaizmaksas.lv']
+
+def research_prices(client, description):
+    today=datetime.now().strftime('%Y-%m-%d')
+    prompt=("Find CURRENT PUBLIC Latvia market prices for the specific renovation works and required construction materials below. "
+            "Search Latvian contractors' published work price lists and Latvian building stores. "
+            "Prefer baufonds.lv, kalkulatori.meistarpro.lv, getapro.lv, kursi.lv, ksenukai.lv, online.depo.lv, buvserviss.lv; other credible Latvia suppliers permitted. "
+            "Work prices and product prices MUST be kept separate. Product bundles must not double count included components. "
+            "Return ONLY JSON with sources array: [{title, url, item, category:'labor' or 'material' or 'machine', unit, price_eur, "
+            "price_min_eur, price_max_eur, includes_vat: true/false/null, observed_date:'YYYY-MM-DD or unknown', notes}]. "
+            "Use exact URL for a publicly discoverable page. NEVER invent prices, URLs, dates, VAT treatment, or products. "
+            "If only range available leave price_eur null. If unverified, OMIT it. Max 35 sources. Include at least two independently published offers per major work/material where possible. "
+            "Today: "+today+". Job: "+description[:2800])
+    try:
+        result=client.responses.create(model=os.getenv('PRICE_RESEARCH_MODEL','gpt-4.1-mini'),tools=[{'type':'web_search_preview','search_context_size':'high'}],input=prompt,timeout=45)
+        raw=result.output_text.strip();start=raw.find('{');end=raw.rfind('}')
+        obj=json.loads(raw[start:end+1]) if start>=0 and end>start else {}
+        sources=[]
+        for x in (obj.get('sources') or [])[:35]:
+            if not isinstance(x,dict):continue
+            url=str(x.get('url') or '').strip()
+            if not url.startswith('https://') or len(url)>700:continue
+            domain=urlparse(url).hostname or ''
+            if domain in ('example.com','www.example.com','localhost') or '.' not in domain:continue
+            def price(k):
+                try:
+                    v=float(x.get(k))
+                    return round(v,4) if 0 < v < 10000000 else None
+                except (TypeError,ValueError):return None
+            item={k:x.get(k) for k in ('title','url','item','category','unit','includes_vat','observed_date','notes')}
+            item.update({k:price(k) for k in ('price_eur','price_min_eur','price_max_eur')})
+            if item['price_eur'] is None and item['price_min_eur'] is None and item['price_max_eur'] is None:continue
+            item['id']='S'+str(len(sources)+1)
+            item['verification']='AI web-search extracted; original page not independently validated'
+            sources.append(item)
+        return sources
+    except Exception:
+        app.logger.exception('Market price research unavailable')
+        return []
+
+def apply_evidence_prices(rows, sources, level):
+    """Use only explicitly associated sources with matching units and categories.
+    This is a deterministic calculation from AI-extracted web evidence, NOT
+    independent proof that an offer is currently available.
+    """
+    by_id={x['id']:x for x in sources}
+    levels={'low':0,'mid':1,'high':2}
+    chosen=levels.get(level,1)
+    report=[]
+    for row in rows:
+        ids=row.pop('source_ids',[])
+        if not isinstance(ids,list):ids=[]
+        used=[]
+        for field,kind in [('labor','labor'),('material','material'),('machine','machine')]:
+            prices=[]
+            for source_id in ids:
+                x=by_id.get(str(source_id))
+                if not x or x.get('category')!=kind:continue
+                if str(x.get('unit') or '').strip().lower()!=str(row['unit']).strip().lower():continue
+                candidates=[x.get('price_min_eur'),x.get('price_eur'),x.get('price_max_eur')]
+                available=[v for v in candidates if isinstance(v,(int,float)) and v>0]
+                if not available or x.get('includes_vat') is None:continue
+                v=(min(available),statistics.median(available),max(available))[chosen]
+                if x['includes_vat'] is True:v/=1.21
+                prices.append(v);used.append(source_id)
+            if prices:
+                # For the middle tier, median across comparable sources.
+                row[field]=round((min(prices),statistics.median(prices),max(prices))[chosen],2)
+        row['evidence_ids']=list(dict.fromkeys(used))
+        row['pricing_status']='web_search_based' if used else 'AI_estimate_unverified'
+        report.append({'name':row['name'],'status':row['pricing_status'],'sources':row['evidence_ids']})
+    return report
+
 @app.post('/api/estimate')
 def estimate():
     data = request.get_json(silent=True)
@@ -26,6 +102,9 @@ def estimate():
     if not key:
         return jsonify(error='OPENAI_API_KEY nav konfigurēts Render Environment.'), 503
     description = str(data['description'])[:12000]
+    price_level = str(data.get('price_level','mid'))
+    price_hint = {'low':'ekonomiskā līmeņa','mid':'Latvijas vidējā tirgus līmeņa','high':'augstākā cenu līmeņa'}.get(price_level,'Latvijas vidējā tirgus līmeņa')
+    description += '\nIzvēlētais cenu segments: '+price_hint+'. Norādi cenu pieņēmumus un nenosauc tās par reāllaikā pārbaudītām.'
     images = data.get('images') or []
     if not isinstance(images, list):
         images = []
@@ -37,10 +116,13 @@ def estimate():
 Sagatavo DETALIZĒTU, pārbaudāmu provizorisku tāmi un atsevišķu apsekošanas akta PROJEKTU.
 KRITISKI: nedrīkst vienā rindā rakstīt "Durvju nomaiņa". Katru procesu un materiālu nodali atsevišķās rindās. Durvju nomaiņai apsver: esošo durvju vērtnes demontāžu, kārbas demontāžu (ja nepieciešams), būvgružu izvešanu, ailas sagatavošanu un labošanas darbus, jaunu durvju bloku/vērtni, kārbu, eņģes, slēdzeni, rokturus, blīvējumu, stiprinājumus, montāžas putas, uzstādīšanas darbu, regulēšanu, apdari, transportu. Iekļauj tikai attiecināmos darbus, neizdomā prasības. Līdzīgi detalizē citus darbu veidus. Mērķis: vismaz 8–15 atsevišķas pozīcijas vienkāršai durvju nomaiņai, ja tās ir attiecināmas.
 Ja ir foto: analizē redzamos elementus, bet neapgalvo neredzamus defektus un NEIZSECINI precīzus izmērus no foto. Atšķir redzēto no pieņēmumiem. Ja durvju izmēri nav zināmi, uzskaiti vienību skaitu kā pieņēmumu (piem. 1 gab.), bet izmērus norādi pie precizējamiem datiem.
-Cenas labor/material/machine ir atsevišķas VIENĪBAS provizoriskas cenas EUR bez PVN. Darba pozīcijās pārsvarā labor, materiālu pozīcijās pārsvarā material. Vienu izmaksu nedrīkst ieskaitīt divreiz. Neapgalvo, ka cenas ir pārbaudītas tirgū. Ja cenu nevar pamatoti novērtēt, ievadi 0 un norādi precizējumu. qty=0 tikai tad, ja pat provizorisks apjoms nav iespējams. Neizdomā apsekošanas datumu vai faktu, ka apsekošana ir veikta.
-Atgriez JSON ar struktūru: {"summary":"...", "rows":[{"name":"...", "unit":"gab.", "qty":1, "labor":0, "material":0, "machine":0, "category":"darbi vai materiali vai mehanismi"}], "act":{"observations":"...", "defects":"...", "recommendations":"...", "limitations":"..."}, "assumptions":["..."], "missing_data":["..."]}. Atgriez pēc iespējas konkrētas pozīcijas un materiālus; PVN 21% rēķina programma.'''
+Cenu pamatā OBLIGĀTI izmanto pievienotos meklēšanas avotus, ja tie atbilst darbam, vienībai un komplektācijai. Avotu cenu diapazoniem izvēlies low=apakšējo, mid=tipisko/mediānu, high=augšējo robežu, nevis vienkāršu procentu reizinātāju. Atsevišķi pārbaudi, vai avota cena ir ar PVN; tāmei jābūt bez PVN. Ja avotu nav, cenas ir tikai AI provizoriskas un nedrīkst uzdot par pārbaudītām. Nepieciešamos darbus un materiālus uzskaiti arī bez avotiem, norādot nenoteiktību. Cenas labor/material/machine ir atsevišķas VIENĪBAS provizoriskas cenas EUR bez PVN. Darba pozīcijās pārsvarā labor, materiālu pozīcijās pārsvarā material. Vienu izmaksu nedrīkst ieskaitīt divreiz. Izvēlies ticamus Latvijas tirgus segmenta cenu pieņēmumus, atsevišķi materiālus un darbu, neizmanto nepamatoti zemas simboliskas cenas. Ja nav aktuālu datu, to skaidri atzīmē. Neapgalvo, ka cenas ir pārbaudītas tirgū. Ja cenu nevar pamatoti novērtēt, ievadi 0 un norādi precizējumu. qty=0 tikai tad, ja pat provizorisks apjoms nav iespējams. Neizdomā apsekošanas datumu vai faktu, ka apsekošana ir veikta.
+Katrai rindai pievieno source_ids ar tikai tieši atbilstošajiem avotu ID (piem. ["S1","S3"]) un TIKAI tad, ja avota mērvienība sakrīt ar rindas mērvienību un darba/materiāla veids sakrīt. Ja nav tiešas atbilstības, source_ids=[]. Atgriez JSON ar struktūru: {"summary":"...", "rows":[{"name":"...", "unit":"gab.", "qty":1, "labor":0, "material":0, "machine":0, "category":"darbi vai materiali vai mehanismi", "source_ids":[]}], "act":{"observations":"...", "defects":"...", "recommendations":"...", "limitations":"..."}, "assumptions":["..."], "missing_data":["..."]}. Atgriez pēc iespējas konkrētas pozīcijas un materiālus; PVN 21% rēķina programma.'''
     try:
-        client = OpenAI(api_key=key, timeout=110)
+        client = OpenAI(api_key=key, timeout=62)
+        sources=research_prices(client,description)
+        evidence=json.dumps(sources,ensure_ascii=False)[:19000]
+        content[0]['text'] += '\nPĀRBAUDĀMIE CENU AVOTI (no tīmekļa meklēšanas): '+evidence+'\nJa avotu nav vai tie nav pietiekami, cenas atzīmē kā NEPĀRBAUDĪTAS un neapgalvo, ka tās ir tirgus vidējās.'
         res = client.chat.completions.create(model=os.getenv('OPENAI_MODEL', 'gpt-4.1-mini'), messages=[{'role':'system','content':instructions},{'role':'user','content':content}], response_format={'type':'json_object'},temperature=0.15)
         obj = json.loads(res.choices[0].message.content)
         if not isinstance(obj.get('rows'), list) or not isinstance(obj.get('act'), dict):
@@ -51,8 +133,9 @@ Atgriez JSON ar struktūru: {"summary":"...", "rows":[{"name":"...", "unit":"gab
             def num(k):
                 try:return max(0,min(float(r.get(k) or 0),1e8))
                 except (ValueError,TypeError):return 0
-            rows.append(dict(name=str(r.get('name') or '')[:300],unit=str(r.get('unit') or 'gab.')[:20],qty=num('qty'),labor=num('labor'),material=num('material'),machine=num('machine'),category=str(r.get('category') or 'darbi')[:30]))
-        return jsonify(success=True,estimate=obj.get('summary',''),rows=rows,act=obj['act'],assumptions=obj.get('assumptions',[]),missing_data=obj.get('missing_data',[]))
+            rows.append(dict(name=str(r.get('name') or '')[:300],unit=str(r.get('unit') or 'gab.')[:20],qty=num('qty'),labor=num('labor'),material=num('material'),machine=num('machine'),category=str(r.get('category') or 'darbi')[:30],source_ids=r.get('source_ids') or []))
+        pricing_report=apply_evidence_prices(rows,sources,price_level)
+        return jsonify(pricing_report=pricing_report,success=True,estimate=obj.get('summary',''),rows=rows,act=obj['act'],assumptions=obj.get('assumptions',[]),missing_data=obj.get('missing_data',[]),price_sources=sources,price_verified=False,price_research_status="web_search_based_not_independently_verified",price_checked_at=datetime.now().isoformat(timespec='seconds'),price_level=price_level)
     except Exception:
         app.logger.exception('AI estimate failed')
         return jsonify(error='AI ģenerēšana neizdevās. Pārbaudiet Render Logs.'),502
@@ -102,6 +185,24 @@ def workbook(payload):
         try:
             im=Image(io.BytesIO(logo));im.width=120;im.height=45;ws.add_image(im,'F3')
         except Exception:pass
+    evidence=wb.create_sheet('Cenu pamatojums')
+    evidence.append(['CENU PAMATOJUMS — PIELIKUMS (nav tāmes pamatdaļa)'])
+    evidence.append(['Pārbaudes datums',safe(payload.get('price_checked_at'))])
+    evidence.append(['Cenu līmenis',safe(payload.get('price_level') or 'mid')])
+    evidence.append(['Piezīme','Tīmekļa meklēšanas AI iegūti dati, nevis neatkarīgi pārbaudītas cenas. Avotu cenu, PVN un komplektāciju apstiprināt manuāli.'])
+    evidence.append(['Nr.','Pozīcija','Veids','Avots','Cena EUR','No EUR','Līdz EUR','PVN iekļauts?','Datums','Saite','Piezīmes'])
+    for i,x in enumerate(payload.get('price_sources') or [],1):
+        if not isinstance(x,dict):continue
+        evidence.append([i,safe(x.get('item')),safe(x.get('category')),safe(x.get('title')),x.get('price_eur'),x.get('price_min_eur'),x.get('price_max_eur'),str(x.get('includes_vat')),safe(x.get('observed_date')),safe(x.get('url')),safe(x.get('notes'))])
+        c=evidence.cell(evidence.max_row,10)
+        if safe(x.get('url')).startswith('https://'):c.hyperlink=safe(x.get('url'));c.style='Hyperlink'
+    evidence.append(['Tāmes pozīcijas un to avotu piesaiste'])
+    evidence.append(['Pozīcija','Statuss','Izmantoto avotu ID'])
+    for r in rows:evidence.append([safe(r.get('name')),safe(r.get('pricing_status') or 'AI_estimate_unverified'),', '.join(r.get('evidence_ids') or [])])
+    if not payload.get('price_sources'):evidence.append(['Nav pārbaudītu tīmekļa cenu avotu. AI norādītās cenas ir tikai provizoriskas.'])
+    for col,w in {'A':9,'B':43,'C':15,'D':29,'E':16,'F':16,'G':16,'H':18,'I':17,'J':65,'K':60}.items():evidence.column_dimensions[col].width=w
+    for cell in evidence[5]:cell.fill=PatternFill('solid',fgColor=navy);cell.font=Font(color=white,bold=True)
+    evidence.freeze_panes='B6';evidence.sheet_view.showGridLines=False
     output=io.BytesIO();wb.save(output);output.seek(0);return output
 
 def pdf(payload):
@@ -133,6 +234,28 @@ def pdf(payload):
     if kind=='act':
         story.append(p('Apsekošanas datums: '+safe(obj.get('inspectionDate'))+'     Apsekotājs: '+safe(obj.get('inspector'))))
         for label,key in [('Sniegtā informācija','description'),('Konstatētais (pēc sniegtās informācijas)','observations'),('Defekti / bojājumi','defects'),('Ieteicamie pasākumi','recommendations'),('Apsekošanas ierobežojumi','limitations')]:story.extend([p(label,heading),p(obj.get(key) or 'Nav norādīts')])
+        inspections=payload.get('inspection') or []
+        if inspections:
+            story.append(p('Vizuālās apskates kontrolsaraksts (MK Nr. 907, 11.–13. punkts)',heading))
+            rows_data=[[p(x,sm) for x in ('Nr.','Elements','Rezultāts / konstatētais','Nepieciešamās darbības')]]
+            states={'unseen':'Nav apskatīts','ok':'Bez redzamiem bojājumiem','defect':'Konstatēti bojājumi','inaccessible':'Nav piekļuves','na':'Nav attiecināms'}
+            for n,item in enumerate(inspections,1):
+                if not isinstance(item,dict):continue
+                result=(states.get(item.get('status'),'Nav apskatīts')+'; '+safe(item.get('note'))).strip('; ')
+                rows_data.append([p(n,sm),p(item.get('name'),sm),p(result,sm),p(item.get('action'),sm)])
+            t=Table(rows_data,colWidths=[27,138,197,141],repeatRows=1,hAlign='LEFT')
+            t.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,0),colors.HexColor('#0C3153')),('ROWBACKGROUNDS',(0,1),(-1,-1),[colors.white,colors.HexColor('#EFF5FA')]),('GRID',(0,0),(-1,-1),.4,colors.HexColor('#B8CBDC')),('VALIGN',(0,0),(-1,-1),'TOP')]))
+            for cell in rows_data[0]:cell.style=ParagraphStyle('inspectionHead',parent=sm,textColor=colors.white,fontName='DejaVu-Bold')
+            story.append(t)
+            story.append(p('MK Nr. 907, 3. pielikuma žurnāla ierakstam: datums, objekts, rezultāts, nepieciešamās darbības, apsekotājs un paraksts.',sm))
+            for item in inspections:
+                for n,raw in enumerate((item.get('photos') or [])[:4],1):
+                    if not isinstance(raw,str) or not raw.startswith('data:image/'):continue
+                    try:
+                        im=PILImage.open(io.BytesIO(base64.b64decode(raw.split(',',1)[1])));im.thumbnail((900,700));b=io.BytesIO();im.convert('RGB').save(b,'JPEG',quality=72);b.seek(0)
+                        factor=min(440/im.width,260/im.height)
+                        story.append(KeepTogether([p('Foto: '+safe(item.get('name'))+' Nr. '+str(n),sm),Image(b,width=im.width*factor,height=im.height*factor)]))
+                    except Exception:pass
         story.extend([Spacer(1,15),p('Apsekotājs: _________________________     Pasūtītājs: _________________________'),p('Šis dokuments ir projekta variants; faktisko apsekošanu un konstatējumus jāapstiprina atbildīgajai personai.',sm)])
     else:
         story.extend([p('Darbu apraksts: '+safe(obj.get('description'))),Spacer(1,10)])
@@ -153,7 +276,55 @@ def pdf(payload):
             im=PILImage.open(io.BytesIO(base64.b64decode(raw.split(',',1)[1])));im.thumbnail((900,650));b=io.BytesIO();im.convert('RGB').save(b,'JPEG',quality=75);b.seek(0)
             story.append(KeepTogether([p('Fotopielikums Nr. '+str(i),heading),Image(b,width=im.width*min(470/im.width,330/im.height),height=im.height*min(470/im.width,330/im.height))]))
         except Exception:pass
+    if kind=='estimate':
+        from reportlab.platypus import PageBreak
+        story.append(PageBreak())
+        story.append(p('PIELIKUMS Nr. 1 — CENU PAMATOJUMS',title))
+        story.append(p('Avoti iegūti ar AI tīmekļa meklēšanu; saites un cenas nav neatkarīgi verificētas. Pirms piedāvājuma apstiprināšanas pārbaudiet katru avotu.',sm))
+        story.append(p('Šis pielikums ir informatīvs un nav tāmes pamatdaļa. Pārbaudes laiks: '+safe(payload.get('price_checked_at')),sm))
+        story.append(p('Cenu segments: '+{'low':'Ekonomiskais','mid':'Vidējais tirgus','high':'Augstākais'}.get(payload.get('price_level'),'Vidējais tirgus'),sm))
+        evidence=payload.get('price_sources') or []
+        if not evidence:story.append(p('Pārbaudīti tīmekļa cenu avoti nav pieejami. Tāmes cenas ir provizoriskas un nav apstiprinātas tirgus cenas.'))
+        else:
+            for i,x in enumerate(evidence,1):
+                if not isinstance(x,dict):continue
+                story.append(p(str(i)+'. '+safe(x.get('item'))+' — '+safe(x.get('title')),heading))
+                story.append(p('Cena: '+safe(x.get('price_eur'))+' EUR; diapazons: '+safe(x.get('price_min_eur'))+'–'+safe(x.get('price_max_eur'))+' EUR / '+safe(x.get('unit'))+'; PVN iekļauts: '+str(x.get('includes_vat'))+'; datums: '+safe(x.get('observed_date')),sm))
+                url=safe(x.get('url'))
+                if url.startswith('https://'):story.append(Paragraph('<link href="'+escape(url,{'"':'&quot;'})+'" color="blue">'+escape(url)+'</link>',sm))
+                if x.get('notes'):story.append(p(x.get('notes'),sm))
+        story.append(p('Tāmes pozīciju cenu pamatojuma statuss',heading))
+        for r in rows:story.append(p(safe(r.get('name'))+' — '+('AI provizoriska cena, bez tieša avota' if not r.get('evidence_ids') else 'Tīmekļa meklēšanas avoti: '+', '.join(r.get('evidence_ids'))),sm))
+        story.append(p('Avotu cenu, PVN statusu, komplektāciju un pieejamību pirms piedāvājuma apstiprināšanas jāpārbauda.',sm))
     doc.build(story);output.seek(0);return output
+
+
+@app.post('/api/inspection-refine')
+def inspection_refine():
+    data=request.get_json(silent=True) or {}
+    entries=data.get('entries') or []
+    if not isinstance(entries,list) or len(entries)>50:return jsonify(error='Pārāk daudz punktu'),400
+    key=os.getenv('OPENAI_API_KEY')
+    if not key:return jsonify(error='OPENAI_API_KEY nav konfigurēts'),503
+    clean=[]
+    for e in entries:
+        if not isinstance(e,dict):continue
+        clean.append({'id':str(e.get('id',''))[:40],'name':str(e.get('name',''))[:150],'status':str(e.get('status',''))[:30],'note':str(e.get('note',''))[:2000],'photos':[(x) for x in (e.get('photos') or [])[:2] if isinstance(x,str) and x.startswith(('data:image/jpeg;base64,','data:image/png;base64,')) and len(x)<1500000]})
+    if not any(e['note'] or e['photos'] for e in clean):return jsonify(error='Pievienojiet tekstu vai foto'),400
+    try:
+        client=OpenAI(api_key=key,timeout=95)
+        content=[{'type':'text','text':json.dumps([{k:v for k,v in e.items() if k!='photos'} for e in clean],ensure_ascii=False)}]
+        for e in clean:
+            for photo in e['photos'][:2]:
+                if sum(1 for x in content if x.get('type')=='image_url')>=8:break
+                content.append({'type':'text','text':'Foto attiecas uz punktu '+e['id']+' '+e['name']})
+                content.append({'type':'image_url','image_url':{'url':photo,'detail':'low'}})
+        result=client.chat.completions.create(model=os.getenv('OPENAI_MODEL','gpt-4.1-mini'),response_format={'type':'json_object'},messages=[{'role':'system','content':'Tu esi Latvijas dzīvojamo māju vizuālās apskates akta redaktors. MK Nr.907. Raksti latviski. NEIZDOMĀ neredzamus defektus, veiktas darbības vai tehniskās pārbaudes. Pārfrāzē tikai ievadītos faktus un redzamo foto, neskaidrības atzīmē. Foto nedod precīzus izmērus. Atgriez JSON {"entries":[{"id":"...","note":"...","action":"..."}]}. Ieteikumus sniedz tikai ja fakti to pamato.'},{'role':'user','content':content}],temperature=0.1)
+        parsed=json.loads(result.choices[0].message.content)
+        return jsonify(entries=[{'id':str(e.get('id',''))[:40],'note':str(e.get('note',''))[:2000],'action':str(e.get('action',''))[:1000]} for e in parsed.get('entries',[]) if isinstance(e,dict)])
+    except Exception:
+        app.logger.exception('Inspection refinement failed')
+        return jsonify(error='AI apsekošanas apstrāde neizdevās'),502
 
 @app.post('/api/document')
 def document():
