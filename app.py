@@ -28,7 +28,7 @@ def create_estimate():
 
     if not api_key:
         return jsonify({
-            "error": "Gemini API key is not configured"
+            "error": "OpenAI API key is not configured"
         }), 500
 
     data = request.get_json(silent=True)
