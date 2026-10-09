@@ -1,8 +1,7 @@
 import os
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-from google import genai
-from google.genai import types
+from openai import OpenAI
 
 app = Flask(__name__)
 
@@ -25,7 +24,7 @@ def home():
 
 @app.post("/api/estimate")
 def create_estimate():
-    api_key = os.getenv("GEMINI_API_KEY")
+    api_key = os.getenv("OPENAI_API_KEY")
 
     if not api_key:
         return jsonify({
@@ -47,7 +46,7 @@ def create_estimate():
         }), 400
 
     try:
-        client = genai.Client(api_key=api_key)
+        client = OpenAI(api_key=api_key)
 
         prompt = f"""
         Tu esi profesionāls būvdarbu tāmētājs Latvijā.
@@ -70,17 +69,16 @@ def create_estimate():
         Skaidri norādi, ka cenas ir provizoriskas.
         """
 
-        response = client.models.generate_content(
-            model="gemini-3.8-flash",
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                temperature=0.2
-            )
+response = client.responses.create(
+    model="gpt-4.1-mini",
+    instructions="Tu esi profesionāls būvdarbu tāmētājs Latvijā. Atbildi latviešu valodā.",
+    input=prompt
+)
         )
 
         return jsonify({
             "success": True,
-            "estimate": response.text
+            "estimate": response.output_text
         })
 
     except Exception:
