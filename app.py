@@ -150,6 +150,14 @@ def apply_evidence_prices(rows, sources, level):
         ids=row.pop('source_ids',[])
         if not isinstance(ids,list):ids=[]
         used=[]
+        # Fallback mapping: AI often forgets source_ids even for exact products.
+        # Only attach independently verified store product, never a generic search snippet.
+        row_words=set(re.findall(r'[a-zāčēģīķļņšūž]{4,}',str(row.get('name','')).lower()))
+        for candidate in sources:
+            if candidate.get('category')!='material' or not candidate.get('shop_verified'):continue
+            if str(candidate.get('unit','')).strip().lower()!=str(row.get('unit','')).strip().lower():continue
+            item_words=set(re.findall(r'[a-zāčēģīķļņšūž]{4,}',str(candidate.get('verified_product_name') or candidate.get('item') or '').lower()))
+            if len(row_words & item_words)>=2 and candidate['id'] not in ids:ids.append(candidate['id'])
         for field,kind in [('labor','labor'),('material','material'),('machine','machine')]:
             prices=[]
             for source_id in ids:
@@ -171,10 +179,9 @@ def apply_evidence_prices(rows, sources, level):
                 row[field]=round((min(prices),statistics.median(prices),max(prices))[chosen],2)
         # An unsupported material price is not a shop price. Keep the line, but request verification.
         if row.get('material',0)>0 and not any(by_id.get(sid,{}).get('category')=='material' and by_id.get(sid,{}).get('shop_verified') for sid in used):
-            row['material']=0.0
-            row['material_price_note']='Nav neatkarīgi nolasītas veikala produkta cenas; jāprecizē.'
+            row['material_price_note']='Veikala cena NAV pārbaudīta; norādītā summa ir AI provizoriska, nevis aktuāla veikala cena.'
         row['evidence_ids']=list(dict.fromkeys(used))
-        row['pricing_status']='web_search_based' if used else 'AI_estimate_unverified'
+        row['pricing_status']='shop_verified' if any(by_id.get(sid,{}).get('shop_verified') for sid in used) else ('web_search_based' if used else 'AI_estimate_unverified')
         report.append({'name':row['name'],'status':row['pricing_status'],'sources':row['evidence_ids']})
     return report
 
@@ -219,6 +226,19 @@ Katrai rindai pievieno source_ids ar tikai tieši atbilstošajiem avotu ID (piem
                 try:return max(0,min(float(r.get(k) or 0),1e8))
                 except (ValueError,TypeError):return 0
             rows.append(dict(name=str(r.get('name') or '')[:300],unit=str(r.get('unit') or 'gab.')[:20],qty=num('qty'),labor=num('labor'),material=num('material'),machine=num('machine'),category=str(r.get('category') or 'darbi')[:30],source_ids=r.get('source_ids') or []))
+        # Second targeted search: real product descriptions are known only after the
+        # estimate was generated. This is much more specific than the initial search.
+        material_names=[r['name'] for r in rows if r.get('category','').lower().startswith('mater') or (r.get('material',0)>0 and r.get('labor',0)==0)]
+        if material_names:
+            material_query=('Find exact retail PRODUCT pages with publicly shown EUR prices for these materials in Latvia, '
+                            'prefer ksenukai.lv, buvserviss.lv, kurshi.lv, depo.lv. '
+                            'Only return matching product offers, no general category pages. Products: '
+                            + '; '.join(material_names[:18]))
+            additional=verify_shop_prices(research_prices(client,material_query))
+            for x in additional:
+                if x.get('category')!='material':continue
+                x['id']='S'+str(len(sources)+1)
+                sources.append(x)
         pricing_report=apply_evidence_prices(rows,sources,price_level)
         return jsonify(pricing_report=pricing_report,material_prices_missing=sum(1 for r in rows if r.get('material_price_note')),success=True,estimate=obj.get('summary',''),rows=rows,act=obj['act'],assumptions=obj.get('assumptions',[]),missing_data=obj.get('missing_data',[]),price_sources=sources,price_verified=False,price_research_status="shop_jsonld_checked_vat_may_be_unknown",price_checked_at=datetime.now().isoformat(timespec='seconds'),price_level=price_level)
     except Exception as exc:
