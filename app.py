@@ -69,11 +69,11 @@ def create_estimate():
         Skaidri norādi, ka cenas ir provizoriskas.
         """
 
-response = client.responses.create(
-    model="gpt-4.1-mini",
-    instructions="Tu esi profesionāls būvdarbu tāmētājs Latvijā. Atbildi latviešu valodā.",
-    input=prompt
-)
+        response = client.responses.create(
+            model="gpt-4.1-mini",
+            instructions="Tu esi profesionāls būvdarbu tāmētājs Latvijā. Atbildi latviešu valodā.",
+            input=prompt
+        )
 
         return jsonify({
             "success": True,
