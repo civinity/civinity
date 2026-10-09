@@ -3,6 +3,8 @@ import io
 import json
 import logging
 import statistics
+import re
+from urllib.parse import urlsplit
 from urllib.parse import urlparse
 import os
 from datetime import datetime
@@ -34,7 +36,7 @@ def research_prices(client, description):
             "If only range available leave price_eur null. If unverified, OMIT it. Max 35 sources. Include at least two independently published offers per major work/material where possible. "
             "Today: "+today+". Job: "+description[:2800])
     try:
-        result=client.with_options(max_retries=0).responses.create(model=os.getenv('PRICE_RESEARCH_MODEL','gpt-4.1-mini'),tools=[{'type':'web_search_preview','search_context_size':'high'}],input=prompt,timeout=18)
+        result=client.with_options(max_retries=0).responses.create(model=os.getenv('PRICE_RESEARCH_MODEL','gpt-4.1-mini'),tools=[{'type':'web_search_preview','search_context_size':'high'}],input=prompt,timeout=55)
         raw=result.output_text.strip();start=raw.find('{');end=raw.rfind('}')
         obj=json.loads(raw[start:end+1]) if start>=0 and end>start else {}
         sources=[]
@@ -60,6 +62,81 @@ def research_prices(client, description):
         app.logger.exception('Market price research unavailable')
         return []
 
+# Supplier pages are checked independently from AI output. Only Product offers
+# with machine-readable, on-page price data are accepted as shop prices.
+SHOP_HOSTS = ('depo.lv', 'kurshi.lv', 'ksenukai.lv', 'buvserviss.lv', 'bauhof.lv', 'prof.lv', 'buvniecibas-abc.lv', 'online.depo.lv')
+
+def _shop_host(url):
+    try:
+        u=urlsplit(url)
+        host=(u.hostname or '').lower()
+        return u.scheme=='https' and any(host==h or host.endswith('.'+h) for h in SHOP_HOSTS)
+    except Exception:return False
+
+def _jsonld_nodes(value):
+    if isinstance(value,list):
+        for x in value:yield from _jsonld_nodes(x)
+    elif isinstance(value,dict):
+        yield value
+        if '@graph' in value:yield from _jsonld_nodes(value['@graph'])
+
+def _numeric_price(value):
+    if isinstance(value,str):value=value.replace(' ', '').replace('\u00a0','').replace(',','.')
+    try:
+        x=float(value)
+        return round(x,2) if 0<x<1000000 else None
+    except (ValueError,TypeError):return None
+
+def verify_shop_prices(sources):
+    import requests
+    from bs4 import BeautifulSoup
+    session=requests.Session()
+    session.headers.update({'User-Agent':'Mozilla/5.0 (compatible; CivinityEstimate/1.0; price-evidence-check)'})
+    checked=0
+    for x in sources:
+        x['verification']='not_independently_verified'
+        x['shop_verified']=False
+        if x.get('category')!='material' or not _shop_host(str(x.get('url') or '')):continue
+        if checked>=18:break
+        checked+=1
+        try:
+            response=session.get(x['url'],timeout=7,allow_redirects=True)
+            if response.status_code!=200 or len(response.content)>3_000_000 or not _shop_host(response.url):continue
+            soup=BeautifulSoup(response.text,'html.parser')
+            products=[]
+            for script in soup.select('script[type="application/ld+json"]'):
+                try:
+                    for node in _jsonld_nodes(json.loads(script.string or script.get_text())):
+                        typ=node.get('@type',[])
+                        if isinstance(typ,str):typ=[typ]
+                        if 'Product' in typ:products.append(node)
+                except (ValueError,TypeError):pass
+            expected=str(x.get('item') or '').lower()
+            expected_words={w for w in re.findall(r'[\wāčēģīķļņšūž]{4,}',expected) if not w.isdigit()}
+            for product in products:
+                title=str(product.get('name') or '').lower()
+                overlap=len(expected_words & set(re.findall(r'[\wāčēģīķļņšūž]{4,}',title)))
+                if expected_words and overlap<max(1,min(2,len(expected_words))):continue
+                offers=product.get('offers') or []
+                if isinstance(offers,dict):offers=[offers]
+                for offer in offers:
+                    if not isinstance(offer,dict):continue
+                    price=_numeric_price(offer.get('price'))
+                    currency=str(offer.get('priceCurrency') or '').upper()
+                    if price is None or currency!='EUR':continue
+                    x['price_eur']=price
+                    x['price_min_eur']=None
+                    x['price_max_eur']=None
+                    x['includes_vat']=None  # VAT not inferable from JSON-LD
+                    x['verification']='shop_page_jsonld_product_price'
+                    x['shop_verified']=True
+                    x['verified_product_name']=str(product.get('name') or '')[:220]
+                    x['verified_url']=response.url
+                    break
+                if x['shop_verified']:break
+        except (requests.RequestException,ValueError,TypeError,UnicodeError):pass
+    return sources
+
 def apply_evidence_prices(rows, sources, level):
     """Use only explicitly associated sources with matching units and categories.
     This is a deterministic calculation from AI-extracted web evidence, NOT
@@ -78,16 +155,24 @@ def apply_evidence_prices(rows, sources, level):
             for source_id in ids:
                 x=by_id.get(str(source_id))
                 if not x or x.get('category')!=kind:continue
+                if kind=='material' and not x.get('shop_verified'):continue
                 if str(x.get('unit') or '').strip().lower()!=str(row['unit']).strip().lower():continue
                 candidates=[x.get('price_min_eur'),x.get('price_eur'),x.get('price_max_eur')]
                 available=[v for v in candidates if isinstance(v,(int,float)) and v>0]
-                if not available or x.get('includes_vat') is None:continue
+                if not available or (x.get('includes_vat') is None and kind!='material'):continue
                 v=(min(available),statistics.median(available),max(available))[chosen]
                 if x['includes_vat'] is True:v/=1.21
+                # Latvian retail product prices normally include VAT, but do not
+                # assume it when the supplier has not declared it explicitly.
+                # Mark this value as VAT-undetermined instead of guessing.
                 prices.append(v);used.append(source_id)
             if prices:
                 # For the middle tier, median across comparable sources.
                 row[field]=round((min(prices),statistics.median(prices),max(prices))[chosen],2)
+        # An unsupported material price is not a shop price. Keep the line, but request verification.
+        if row.get('material',0)>0 and not any(by_id.get(sid,{}).get('category')=='material' and by_id.get(sid,{}).get('shop_verified') for sid in used):
+            row['material']=0.0
+            row['material_price_note']='Nav neatkarīgi nolasītas veikala produkta cenas; jāprecizē.'
         row['evidence_ids']=list(dict.fromkeys(used))
         row['pricing_status']='web_search_based' if used else 'AI_estimate_unverified'
         report.append({'name':row['name'],'status':row['pricing_status'],'sources':row['evidence_ids']})
@@ -120,8 +205,8 @@ Cenu pamatā OBLIGĀTI izmanto pievienotos meklēšanas avotus, ja tie atbilst d
 Katrai rindai pievieno source_ids ar tikai tieši atbilstošajiem avotu ID (piem. ["S1","S3"]) un TIKAI tad, ja avota mērvienība sakrīt ar rindas mērvienību un darba/materiāla veids sakrīt. Ja nav tiešas atbilstības, source_ids=[]. Atgriez JSON ar struktūru: {"summary":"...", "rows":[{"name":"...", "unit":"gab.", "qty":1, "labor":0, "material":0, "machine":0, "category":"darbi vai materiali vai mehanismi", "source_ids":[]}], "act":{"observations":"...", "defects":"...", "recommendations":"...", "limitations":"..."}, "assumptions":["..."], "missing_data":["..."]}. Atgriez pēc iespējas konkrētas pozīcijas un materiālus; PVN 21% rēķina programma.'''
     try:
         client = OpenAI(api_key=key, timeout=75, max_retries=0)
-        sources=research_prices(client,description)
-        evidence=json.dumps(sources,ensure_ascii=False)[:10500]
+        sources=verify_shop_prices(research_prices(client,description))
+        evidence=json.dumps(sources,ensure_ascii=False)[:18000]
         content[0]['text'] += '\nPĀRBAUDĀMIE CENU AVOTI (no tīmekļa meklēšanas): '+evidence+'\nJa avotu nav vai tie nav pietiekami, cenas atzīmē kā NEPĀRBAUDĪTAS un neapgalvo, ka tās ir tirgus vidējās.'
         res = client.chat.completions.create(model=os.getenv('OPENAI_MODEL', 'gpt-4.1-mini'), messages=[{'role':'system','content':instructions},{'role':'user','content':content}], response_format={'type':'json_object'},temperature=0.15, max_tokens=6500)
         obj = json.loads(res.choices[0].message.content)
@@ -135,7 +220,7 @@ Katrai rindai pievieno source_ids ar tikai tieši atbilstošajiem avotu ID (piem
                 except (ValueError,TypeError):return 0
             rows.append(dict(name=str(r.get('name') or '')[:300],unit=str(r.get('unit') or 'gab.')[:20],qty=num('qty'),labor=num('labor'),material=num('material'),machine=num('machine'),category=str(r.get('category') or 'darbi')[:30],source_ids=r.get('source_ids') or []))
         pricing_report=apply_evidence_prices(rows,sources,price_level)
-        return jsonify(pricing_report=pricing_report,success=True,estimate=obj.get('summary',''),rows=rows,act=obj['act'],assumptions=obj.get('assumptions',[]),missing_data=obj.get('missing_data',[]),price_sources=sources,price_verified=False,price_research_status="web_search_based_not_independently_verified",price_checked_at=datetime.now().isoformat(timespec='seconds'),price_level=price_level)
+        return jsonify(pricing_report=pricing_report,material_prices_missing=sum(1 for r in rows if r.get('material_price_note')),success=True,estimate=obj.get('summary',''),rows=rows,act=obj['act'],assumptions=obj.get('assumptions',[]),missing_data=obj.get('missing_data',[]),price_sources=sources,price_verified=False,price_research_status="shop_jsonld_checked_vat_may_be_unknown",price_checked_at=datetime.now().isoformat(timespec='seconds'),price_level=price_level)
     except Exception as exc:
         app.logger.exception('AI estimate failed')
         kind=type(exc).__name__
@@ -231,7 +316,7 @@ def pdf(payload):
         try:
             pil=PILImage.open(io.BytesIO(logo));pil.thumbnail((400,130));b=io.BytesIO();pil.convert('RGB').save(b,format='PNG');b.seek(0);story.append(Image(b,width=min(pil.width*.45,165),height=min(pil.height*.45,55)))
         except Exception:pass
-    story += [p(co.get('name'),heading),p('Reģ. Nr.: '+safe(co.get('reg'))+'   '+safe(co.get('address')),sm),p('Banka: '+safe(co.get('bank'))+'   IBAN: '+safe(co.get('iban')),sm),Spacer(1,10),p('APSEKOŠANAS AKTS — PROJEKTS' if kind=='act' else 'BŪVDARBU TĀME',title),p('Objekts: '+safe(obj.get('name'))),p('Adrese: '+safe(obj.get('address'))),p('Būves veids: '+safe(obj.get('type')))]
+    story += ([p(co.get('name'),heading)] if kind=='act' else []) + [p('Reģ. Nr.: '+safe(co.get('reg'))+'   '+safe(co.get('address')),sm),p('Banka: '+safe(co.get('bank'))+'   IBAN: '+safe(co.get('iban')),sm),Spacer(1,10),p('APSEKOŠANAS AKTS — PROJEKTS' if kind=='act' else 'BŪVDARBU TĀME',title),p('Objekts: '+safe(obj.get('name'))),p('Adrese: '+safe(obj.get('address'))),p('Būves veids: '+safe(obj.get('type')))]
     if kind=='act':
         story.append(p('Apsekošanas datums: '+safe(obj.get('inspectionDate'))+'     Apsekotājs: '+safe(obj.get('inspector'))))
         for label,key in [('Sniegtā informācija','description'),('Konstatētais (pēc sniegtās informācijas)','observations'),('Defekti / bojājumi','defects'),('Ieteicamie pasākumi','recommendations'),('Apsekošanas ierobežojumi','limitations')]:story.extend([p(label,heading),p(obj.get(key) or 'Nav norādīts')])
