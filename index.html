@@ -165,35 +165,7 @@ main{max-width:none;padding:22px 28px}.topbar{background:white;border:1px solid 
  .table-scroll table{min-width:690px}#rowsWrap table{min-width:780px}
 }
 @page{size:A4;margin:0} @media print{.mobile-nav,.hero{display:none!important}#printArea{padding:18mm 15mm!important}}
-</style>`;download(`${company}_${kind}_${Date.now()}.doc`,'\ufeff<html><head><meta charset="utf-8">'+css+'</head><body>'+docHtml(kind)+'<script>
-(function(){
-const btn=document.getElementById('runVerifiedV2'),status=document.getElementById('verifiedV2Status'),result=document.getElementById('verifiedV2Result');
-if(!btn)return;
-const base='https://civinity-ai-api.onrender.com';
-const escV=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const el=id=>document.getElementById(id);
-btn.onclick=async()=>{
- const desc=[el('description')?.value,el('area')?.value?'Platība: '+el('area').value+' m²':'',el('damage')?.value?'Bojātā platība: '+el('damage').value+' m²':''].filter(Boolean).join('\n');
- if(!desc.trim()){status.textContent='Ievadiet darbu aprakstu.';return}
- btn.disabled=true;status.textContent='AI veido specifikāciju un pārbauda avotus. Šo logu var atstāt atvērtu.';result.innerHTML='';
- try{
-  const start=await fetch(base+'/api/v2/estimate-jobs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({description:desc,images:(typeof pics!=='undefined'?pics:[]).slice(0,2)})});
-  const init=await start.json();if(!start.ok)throw Error(init.error||'API kļūda');
-  let job;
-  for(let i=0;i<90;i++){
-   await new Promise(r=>setTimeout(r,2500));const r=await fetch(base+'/api/v2/estimate-jobs/'+init.job_id);job=await r.json();if(!r.ok)throw Error(job.error||'Uzdevums pazuda');if(job.status!=='working')break;
-  }
-  if(job.status==='failed')throw Error(job.error);if(job.status!=='done')throw Error('Uzdevums vēl nav pabeigts');
-  const d=job.result;status.textContent=d.complete?'Visas pozīcijas ir novērtētas no avotiem.':'NEPILNĪGA TĀME — trūkst pārbaudītu cenu. Katalogā: '+d.material_catalog_count+' materiāli, '+d.labor_catalog_count+' darba piedāvājumi.';
-  let html='<p>'+escV(d.summary)+'</p><table><thead><tr><th>Pozīcija</th><th>Veids</th><th>Daudz.</th><th>Ekonomiskais €/v.</th><th>Vidējais €/v.</th><th>Augstākais €/v.</th><th>Materiāli kopā bez PVN</th><th>Avots / statuss</th></tr></thead><tbody>';
-  for(const x of d.items){const offers=(x.offers||[]).map(o=>o.url?'<a target="_blank" rel="noopener noreferrer" href="'+escV(o.url)+'">'+escV(o.name||'Veikals')+'</a>':'').join('<br>');html+='<tr><td>'+escV(x.name)+'</td><td>'+escV(x.kind)+'</td><td>'+escV(x.qty??'Jāprecizē')+' '+escV(x.unit)+'</td><td>'+escV(x.price_low??'—')+'</td><td>'+escV(x.price_mid??'—')+'</td><td>'+escV(x.price_high??'—')+'</td><td>'+escV(x.line_total??'Nav cenas')+'</td><td>'+escV(x.status)+'<br>'+offers+'</td></tr>'}
-  html+='</tbody></table><p><b>Šis ir aprēķina projekts, nevis gala komercpiedāvājums.</b> Trūkstošās cenas netiek ieskaitītas kā bezmaksas materiāli.</p>';
-  result.innerHTML=html;
- }catch(e){status.textContent='Kļūda Tāme 2.0: '+e.message}finally{btn.disabled=false}
-};
-})();
-</script>
-</body></html>','application/msword;charset=utf-8')}
+</style>`;download(`${company}_${kind}_${Date.now()}.doc`,'\ufeff<html><head><meta charset="utf-8">'+css+'</head><body>'+docHtml(kind)+'</body></html>','application/msword;charset=utf-8')}
 function saveDoc(kind){if(!saveObject())return;documents.unshift({id:String(Date.now()),kind,object:snapshot(),company,created:new Date().toISOString()});put('documents',documents);alert('Dokuments saglabāts lokālajā arhīvā.')}
 $('printEstimate').onclick=()=>printDoc('estimate');$('printAct').onclick=()=>printDoc('act');$('printOffer').onclick=()=>printDoc('offer');$('wordEstimate').onclick=()=>wordDoc('estimate');$('wordAct').onclick=()=>wordDoc('act');$('saveEstimate').onclick=()=>saveDoc('estimate');$('saveAct').onclick=()=>saveDoc('act');
 $('csv').onclick=()=>{const lines=[['Nr.','Nosaukums','Mērv.','Daudz.','Darbi EUR','Materiāli EUR','Mehānismi EUR','Kopā EUR'],...rows.map((r,i)=>[i+1,r.name,r.unit,r.qty,r.labor,r.material,r.machine,rowSum(r)]),['','','','','','','Kopā bez PVN',subtotal()],['','','','','','','PVN 21%',subtotal()*.21],['','','','','','','Kopā ar PVN',subtotal()*1.21]];download('tame_'+company+'.csv','\ufeff'+lines.map(row=>row.map(x=>'"'+String(x).replaceAll('"','""')+'"').join(';')).join('\r\n'),'text/csv;charset=utf-8')};
@@ -310,6 +282,34 @@ refresh();
  ensure();window.addEventListener('load',ensure);
 })();
 </script><script>
+(function(){
+const btn=document.getElementById('runVerifiedV2'),status=document.getElementById('verifiedV2Status'),result=document.getElementById('verifiedV2Result');
+if(!btn)return;
+const base='https://civinity-ai-api.onrender.com';
+const escV=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const el=id=>document.getElementById(id);
+btn.onclick=async()=>{
+ const desc=[el('description')?.value,el('area')?.value?'Platība: '+el('area').value+' m²':'',el('damage')?.value?'Bojātā platība: '+el('damage').value+' m²':''].filter(Boolean).join('\n');
+ if(!desc.trim()){status.textContent='Ievadiet darbu aprakstu.';return}
+ btn.disabled=true;status.textContent='AI veido specifikāciju un pārbauda avotus. Šo logu var atstāt atvērtu.';result.innerHTML='';
+ try{
+  const start=await fetch(base+'/api/v2/estimate-jobs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({description:desc,images:(typeof pics!=='undefined'?pics:[]).slice(0,2)})});
+  const init=await start.json();if(!start.ok)throw Error(init.error||'API kļūda');
+  let job;
+  for(let i=0;i<90;i++){
+   await new Promise(r=>setTimeout(r,2500));const r=await fetch(base+'/api/v2/estimate-jobs/'+init.job_id);job=await r.json();if(!r.ok)throw Error(job.error||'Uzdevums pazuda');if(job.status!=='working')break;
+  }
+  if(job.status==='failed')throw Error(job.error);if(job.status!=='done')throw Error('Uzdevums vēl nav pabeigts');
+  const d=job.result;status.textContent=d.complete?'Visas pozīcijas ir novērtētas no avotiem.':'NEPILNĪGA TĀME — trūkst pārbaudītu cenu. Katalogā: '+d.material_catalog_count+' materiāli, '+d.labor_catalog_count+' darba piedāvājumi.';
+  let html='<p>'+escV(d.summary)+'</p><table><thead><tr><th>Pozīcija</th><th>Veids</th><th>Daudz.</th><th>Ekonomiskais €/v.</th><th>Vidējais €/v.</th><th>Augstākais €/v.</th><th>Materiāli kopā bez PVN</th><th>Avots / statuss</th></tr></thead><tbody>';
+  for(const x of d.items){const offers=(x.offers||[]).map(o=>o.url?'<a target="_blank" rel="noopener noreferrer" href="'+escV(o.url)+'">'+escV(o.name||'Veikals')+'</a>':'').join('<br>');html+='<tr><td>'+escV(x.name)+'</td><td>'+escV(x.kind)+'</td><td>'+escV(x.qty??'Jāprecizē')+' '+escV(x.unit)+'</td><td>'+escV(x.price_low??'—')+'</td><td>'+escV(x.price_mid??'—')+'</td><td>'+escV(x.price_high??'—')+'</td><td>'+escV(x.line_total??'Nav cenas')+'</td><td>'+escV(x.status)+'<br>'+offers+'</td></tr>'}
+  html+='</tbody></table><p><b>Šis ir aprēķina projekts, nevis gala komercpiedāvājums.</b> Trūkstošās cenas netiek ieskaitītas kā bezmaksas materiāli.</p>';
+  result.innerHTML=html;
+ }catch(e){status.textContent='Kļūda Tāme 2.0: '+e.message}finally{btn.disabled=false}
+};
+})();
+</script>
+<script>
 (function(){
 const btn=document.getElementById('runVerifiedV2'),status=document.getElementById('verifiedV2Status'),result=document.getElementById('verifiedV2Result');
 if(!btn)return;
