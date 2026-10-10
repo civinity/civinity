@@ -100,8 +100,56 @@ def spec_from_ai(description,images):
  obj=json.loads(r.choices[0].message.content)
  return obj,ai
 
+def facade_spec(description):
+ """Deterministic ETICS takeoff; assumptions are explicitly labeled, not AI guesses."""
+ text=description.lower()
+ if not any(w in text for w in ('fasād','fasad')) or not any(w in text for w in ('siltin','putupolistirol','polistirol','eps')):return None
+ area_match=re.search(r'(?:platība|platiba|площадь|area)\s*[:=]?\s*(\d+(?:[.,]\d+)?)\s*m',text)
+ if not area_match:
+  area_match=re.search(r'(\d+(?:[.,]\d+)?)\s*(?:m²|m2|kv\.?m)',text)
+ if not area_match:return None
+ a=D(area_match.group(1).replace(',','.'))
+ if a<1 or a>100000:return None
+ thick=re.search(r'(?:eps|putupolistirol\w*|polistirol\w*|пенополистирол\w*)[^\n]{0,65}?(30|50|100|150|200)\s*mm',text)
+ thickness=thick.group(1) if thick else None
+ def it(name,kind,unit,qty,basis,spec='',sku=None):
+  row={'name':name,'kind':kind,'unit':unit,'quantity':str(qty) if qty is not None else None,'quantity_basis':basis,'specification':spec}
+  if sku:row['catalog_sku']=sku
+  return row
+ items=[it('Fasādes virsmas sagatavošana','labor','m²',a,'Fasādes laukums')]
+ items.append(it('EPS 100 siltumizolācijas plāksnes'+(' '+thickness+' mm' if thickness else ' (biezums jāprecizē)'),'material','m²',(a*D('1.05')).quantize(D('.01')),'Platība × 1,05; 5% griešanas rezerve (pieņēmums)','EPS 100, biezums jāapstiprina', 'eps_'+thickness if thickness else None))
+ items += [
+ it('Siltumizolācijas līmjava','material','kg',(a*D('5')).quantize(D('.01')),'5 kg/m² provizorisks patēriņš; precizēt pēc ražotāja','Sakret BK 25 kg','sakret_bk'),
+ it('Fasādes dībeļi','material','gab.',(a*D('6')).to_integral_value(rounding='ROUND_CEILING'),'6 gab./m² provizoriski; nepieciešams stiprinājumu projekts','Garums atkarīgs no pamatnes un EPS biezuma'),
+ it('Armējošais stiklašķiedras siets 160 g/m²','material','m²',(a*D('1.10')).quantize(D('.01')),'10% pārlaidumu rezerve (pieņēmums)','Tikai ETICS siets 160 g/m², nevis 70 g/m²'),
+ it('Armēšanas java','material','kg',(a*D('5')).quantize(D('.01')),'5 kg/m² provizoriski; precizēt pēc sistēmas','Sakret BAK 25 kg','sakret_bak'),
+ it('Grunts pirms dekoratīvā apmetuma','material','kg',(a*D('0.3')).quantize(D('.01')),'0,3 kg/m² provizoriski; ražotāja norma ir jāapstiprina','Sakret PG','sakret_pg'),
+ it('Dekoratīvais apmetums 1,5 mm','material','kg',(a*D('2.5')).quantize(D('.01')),'2,5 kg/m² provizoriski; atkarīgs no faktūras','Sakret SMS B 25 kg','sakret_smsb'),
+ it('EPS plākšņu līmēšana','labor','m²',a,'Fasādes laukums'),
+ it('Fasādes armēšana ar sietu','labor','m²',a,'Fasādes laukums'),
+ it('Gruntēšana un dekoratīvā apmetuma uzklāšana','labor','m²',a,'Fasādes laukums')]
+ return {'summary':f'ETICS fasādes siltināšanas provizoriska specifikācija: {a} m². Patēriņa normas ir pieņēmumi, nevis projekta aprēķins.','items':items,'assumptions':['5% EPS rezerve, 10% sieta pārlaidums, 5 kg/m² līmjava, 5 kg/m² armēšana, 6 dībeļi/m², 0,3 kg/m² grunts, 2,5 kg/m² apmetums — provizoriski.'],'missing_data':(['EPS biezums nav norādīts; cena netiks automātiski izvēlēta.'] if not thickness else [])+['Jāprecizē fasādes atvērumi, stūri, profili, cokols, ailes, sastatnes, pamatne un ražotāja patēriņa normas.']}
+
+def exact_catalog_matches(item,catalog):
+ """Never fuzzy-match technical construction products. Match curated SKU rules only."""
+ sku=item.get('catalog_sku')
+ if not sku:return []
+ rules={
+  'eps_100':lambda n:'tenapors eps 100' in n and '100 mm' in n,
+  'eps_50':lambda n:'tenapors eps 100' in n and '50 mm' in n,
+  'eps_30':lambda n:'tenapors eps 100' in n and '30 mm' in n,
+  'sakret_bk':lambda n:'sakret bk ' in n,
+  'sakret_bak':lambda n:'sakret bak ' in n,
+  'sakret_pg':lambda n:'sakret pg ' in n,
+  'sakret_smsb':lambda n:'sakret sms b ' in n,
+ }
+ rule=rules.get(sku)
+ return [r for r in catalog if rule and rule(r['name'].lower()) and r['usage_unit']==item['unit']]
+
 def calculate(description,images):
- obj,ai=spec_from_ai(description,images)
+ obj=facade_spec(description)
+ if obj is None:obj,ai=spec_from_ai(description,images)
+ else:ai=None
  catalog=verified_catalog(); labor=work_catalog();out=[];sources=[]
  for i,it in enumerate(obj.get('items',[])[:70]):
   kind=it.get('kind','material');name=str(it.get('name',''))[:220];unit=str(it.get('unit','gab.'))[:15]
@@ -109,9 +157,9 @@ def calculate(description,images):
   except Exception:qty=None
   record={'id':i+1,'name':name,'kind':kind,'unit':unit,'qty':str(qty) if qty is not None else None,'specification':it.get('specification',''),'quantity_basis':it.get('quantity_basis',''),'price_low':None,'price_mid':None,'price_high':None,'selected_product':None,'status':'NO_VERIFIED_PRICE','offers':[],'line_total':None}
   if kind=='material':
-   matches=[r for r in catalog if match(name,r.get('name','')) and unit==r.get('usage_unit','')]
+   matches=exact_catalog_matches(it,catalog)
    # Live discovery limited to first 8 material positions; direct pages must carry structured prices.
-   if not matches and sum(1 for v in out if v['kind']=='material')<8:
+   if ai is not None and not matches and sum(1 for v in out if v['kind']=='material')<8:
     for url in candidate_urls(ai,name+' '+str(it.get('specification',''))):
      product=extract_product(url,name)
      if product:
@@ -125,7 +173,7 @@ def calculate(description,images):
    complete=[o for o in record['offers'] if o.get('total_net')]
    if complete:
     selected=min(complete,key=lambda o:D(o['total_net']))
-    record['selected_product']=selected;record['line_total']=selected['total_net'];record['status']='CATALOG_SOURCE_PRICE_CHECK_DATE_REQUIRED'
+    record['selected_product']=selected;record['line_total']=selected['total_net'];record['status']='CATALOG_REFERENCE_NOT_LIVE_VERIFIED'
   elif kind=='labor':
    matches=[r for r in labor if r.get('unit')==unit and match(name,r.get('name',''))]
    vals=[]
@@ -136,7 +184,7 @@ def calculate(description,images):
     vals.sort();record['price_low']=money(vals[max(0,int((len(vals)-1)*.25))]);record['price_mid']=money(statistics.median(vals));record['price_high']=money(vals[min(len(vals)-1,math.ceil((len(vals)-1)*.75))]);record['status']='THREE_LEVELS_FROM_PUBLISHED_OFFERS'
    elif vals:record['status']='INSUFFICIENT_QUOTES_FOR_THREE_LEVELS'
   out.append(record)
- return {'summary':obj.get('summary',''),'items':out,'assumptions':obj.get('assumptions',[]),'missing_data':obj.get('missing_data',[]),'complete':all(x['status'] in ('CATALOG_SOURCE_PRICE_CHECK_DATE_REQUIRED','THREE_LEVELS_FROM_PUBLISHED_OFFERS') for x in out),'material_catalog_count':len(catalog),'labor_catalog_count':len(labor),'checked_at':datetime.now(timezone.utc).isoformat(),'note':'Catalog sources must be periodically rechecked. Live product offers with unknown VAT/pack size are displayed but not priced.'}
+ return {'summary':obj.get('summary',''),'items':out,'assumptions':obj.get('assumptions',[]),'missing_data':obj.get('missing_data',[]),'complete':all(x['status'] in ('LIVE_PRODUCT_VERIFIED','THREE_LEVELS_FROM_PUBLISHED_OFFERS') for x in out),'material_catalog_count':len(catalog),'labor_catalog_count':len(labor),'checked_at':datetime.now(timezone.utc).isoformat(),'note':'Catalog prices are historical reference entries, not live-verified. Supplier/category pages are not proof of a specific product price. Never treat a partial estimate as final.'}
 
 def run_job(job_id,description,images):
  try:

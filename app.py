@@ -16,6 +16,8 @@ from openai import OpenAI
 app = Flask(__name__)
 from pricing_v2 import bp as pricing_v2_bp
 app.register_blueprint(pricing_v2_bp)
+from pricing_live import bp as pricing_live_bp
+app.register_blueprint(pricing_live_bp)
 app.config['MAX_CONTENT_LENGTH'] = 18 * 1024 * 1024
 CORS(app, resources={r'/api/*': {'origins': os.getenv('FRONTEND_URL', 'https://civiniai.onrender.com')}})
 
