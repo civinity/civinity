@@ -19,7 +19,7 @@ CORS(app, resources={r'/api/*': {'origins': os.getenv('FRONTEND_URL', 'https://c
 
 @app.get('/')
 def home():
-    return jsonify(status='online', service='CIVINITY AI BuvTame API', version='3.0')
+    return jsonify(status='online', service='CIVINITY AI BuvTame API', version='18.0')
 
 # Web price evidence is researched for each estimate. Never label model guesses as verified.
 PRICE_SITES = ['baufonds.lv','kalkulatori.meistarpro.lv','getapro.lv','kursi.lv','ksenukai.lv','online.depo.lv','buvserviss.lv','remontaizmaksas.lv']
@@ -138,53 +138,68 @@ def verify_shop_prices(sources):
     return sources
 
 def apply_evidence_prices(rows, sources, level):
-    """Use only explicitly associated sources with matching units and categories.
-    This is a deterministic calculation from AI-extracted web evidence, NOT
-    independent proof that an offer is currently available.
+    """Use published evidence only when product/work and units match.
+    A missing price is explicit; never turn an unknown into a fictitious price.
     """
-    by_id={x['id']:x for x in sources}
-    levels={'low':0,'mid':1,'high':2}
-    chosen=levels.get(level,1)
+    from decimal import Decimal, ROUND_HALF_UP
+    by_id={str(x.get('id')):x for x in sources}
+    rank={'low':0,'mid':1,'high':2}.get(level,1)
+    def tokens(value):
+        return set(re.findall(r'[a-zāčēģīķļņšūž]{4,}',str(value or '').lower()))
+    def matching(row,x,kind):
+        if x.get('category')!=kind:return False
+        if str(x.get('unit') or '').strip().lower()!=str(row.get('unit') or '').strip().lower():return False
+        a=tokens(row.get('name'));b=tokens(x.get('verified_product_name') or x.get('item'))
+        return bool(a and b and len(a & b)>=min(2,len(a),len(b)))
     report=[]
     for row in rows:
         ids=row.pop('source_ids',[])
         if not isinstance(ids,list):ids=[]
-        used=[]
-        # Fallback mapping: AI often forgets source_ids even for exact products.
-        # Only attach independently verified store product, never a generic search snippet.
-        row_words=set(re.findall(r'[a-zāčēģīķļņšūž]{4,}',str(row.get('name','')).lower()))
-        for candidate in sources:
-            if candidate.get('category')!='material' or not candidate.get('shop_verified'):continue
-            if str(candidate.get('unit','')).strip().lower()!=str(row.get('unit','')).strip().lower():continue
-            item_words=set(re.findall(r'[a-zāčēģīķļņšūž]{4,}',str(candidate.get('verified_product_name') or candidate.get('item') or '').lower()))
-            if len(row_words & item_words)>=2 and candidate['id'] not in ids:ids.append(candidate['id'])
+        used=[];missing=[]
+        # Preserve AI draft only for labor, explicitly tagged as NOT verified.
+        # Material and machinery require a published product/rental price.
         for field,kind in [('labor','labor'),('material','material'),('machine','machine')]:
-            prices=[]
-            for source_id in ids:
-                x=by_id.get(str(source_id))
-                if not x or x.get('category')!=kind:continue
+            offers=[]
+            for x in sources:
+                if not matching(row,x,kind):continue
                 if kind=='material' and not x.get('shop_verified'):continue
-                if str(x.get('unit') or '').strip().lower()!=str(row['unit']).strip().lower():continue
-                candidates=[x.get('price_min_eur'),x.get('price_eur'),x.get('price_max_eur')]
-                available=[v for v in candidates if isinstance(v,(int,float)) and v>0]
-                if not available or (x.get('includes_vat') is None and kind!='material'):continue
-                v=(min(available),statistics.median(available),max(available))[chosen]
-                if x['includes_vat'] is True:v/=1.21
-                # Latvian retail product prices normally include VAT, but do not
-                # assume it when the supplier has not declared it explicitly.
-                # Mark this value as VAT-undetermined instead of guessing.
-                prices.append(v);used.append(source_id)
-            if prices:
-                # For the middle tier, median across comparable sources.
-                row[field]=round((min(prices),statistics.median(prices),max(prices))[chosen],2)
-        # Strict shop-price policy: never retain model-generated material prices.
-        if row.get('material',0)>0 and not any(by_id.get(sid,{}).get('category')=='material' and by_id.get(sid,{}).get('shop_verified') for sid in used):
-            row['material']=0.0
-            row['material_price_note']='Materiāla cena nav pārbaudīta Latvijas veikalā; nav iekļauta kopsummā.'
-        row['evidence_ids']=list(dict.fromkeys(used))
-        row['pricing_status']='shop_verified' if any(by_id.get(sid,{}).get('shop_verified') for sid in used) else ('web_search_based' if used else 'AI_estimate_unverified')
-        report.append({'name':row['name'],'status':row['pricing_status'],'sources':row['evidence_ids']})
+                price=x.get('price_eur')
+                if not isinstance(price,(float,int)) or price<=0:continue
+                vat=x.get('includes_vat')
+                # Latvian retail product pages normally show consumer gross prices.
+                # If VAT isn't explicitly known, retain gross source value and mark
+                # the net conversion as an ASSUMPTION, not a verified net price.
+                if kind=='material' and vat is None:
+                    net=Decimal(str(price))/Decimal('1.21')
+                    status='SHOP_GROSS_VAT_ASSUMED_21_PERCENT'
+                elif vat is True:
+                    net=Decimal(str(price))/Decimal('1.21')
+                    status='SOURCE_VAT_INCLUDED'
+                else:
+                    net=Decimal(str(price))
+                    status='SOURCE_VAT_EXCLUDED' if vat is False else 'VAT_NOT_SPECIFIED'
+                offers.append((net,str(x['id']),status))
+            if offers:
+                offers.sort(key=lambda o:o[0]);chosen=offers[0] if rank==0 else offers[-1] if rank==2 else offers[len(offers)//2]
+                row[field]=float(chosen[0].quantize(Decimal('0.01'),rounding=ROUND_HALF_UP))
+                used.append(chosen[1]);row[field+'_price_status']=chosen[2]
+            elif kind=='material':
+                # Missing prices stay missing; UI and exports must show this status.
+                if row.get('material',0)>0 or str(row.get('category','')).lower() in ('materiali','materiāli','material') or any(word in tokens(row.get('name')) for word in ('plāksnes','stiprinājumi','līmes','krāsa','materiāls','putuplasta','komplekts')):
+                    row['material']=0.0;row['material_price_status']='MISSING_SHOP_PRICE';missing.append('materiāli')
+            elif kind=='labor' and row.get('labor',0)>0:
+                row['labor_price_status']='AI_PROVISIONAL_NOT_MARKET_VERIFIED';missing.append('darbu cenas')
+            elif kind=='machine' and row.get('machine',0)>0:
+                row['machine_price_status']='AI_PROVISIONAL_NOT_MARKET_VERIFIED';missing.append('mehānismi')
+        row['evidence_ids']=used
+        row['pricing_status']='incomplete' if missing else ('source_backed' if used else 'no_price_evidence')
+        row['material_price_note']='NAV VEIKALA CENAS — summa nav pilnīga' if 'materiāli' in missing else ''
+        report.append({'name':row['name'],'status':row['pricing_status'],'missing':missing,'sources':used})
     return report
+
+@app.get('/api/pricing-health')
+def pricing_health():
+    return jsonify(status='online',mode='source_evidence_only',note='No price is called verified without product page + VAT and unit checks.',version='18.0')
 
 @app.post('/api/estimate')
 def estimate():
@@ -205,7 +220,7 @@ def estimate():
     for img in images[:3]:
         if isinstance(img, str) and img.startswith(('data:image/jpeg;base64,', 'data:image/png;base64,', 'data:image/webp;base64,')) and len(img)<6_000_000:
             content.append({'type':'image_url', 'image_url':{'url':img, 'detail':'low'}})
-    instructions = 'Tu esi Latvijas būvdarbu tāmētājs un cenu datu analītiķis. Sagatavo detalizētu, pārbaudāmu būvdarbu tāmi latviešu valodā. Atgriez tikai JSON.\n\nOBLIGĀTĀS PRASĪBAS:\n1. NODALI DARBUS, MATERIĀLUS UN MEHĀNISMUS. Katrai pozīcijai norādi nosaukumu, mērvienību, daudzumu, darba vienības cenu (labor), materiāla vienības cenu (material), mehānisma vienības cenu (machine), avotu ID un kategoriju. Vienu izmaksu nedrīkst ieskaitīt divreiz. Neizdomā apjomus; nezināmo atzīmē assumptions/missing_data.\n2. MATERIĀLI: izmanto tikai KONKRĒTU Latvijas veikala preces lapu (piem., DEPO, K Senukai, Būvserviss vai cits Latvijas tirgotājs), kur pieejama preces identitāte, iepakojums, mērvienība, publicētā cena un tiešā saite. Saglabā precīzu publicēto cenu ar centiem (2,37 EUR ir 2,37, nevis 2,00 vai 2,50). NEDRĪKST izdomāt centus, cenas, SKU, saites vai pieejamību. Pārbaudi vienības atbilstību: gab./iepakojums/m²/m³/kg/l/m; ja vajag, aprēķini pārrēķinu no pārbaudīta iepakojuma izmēra. Nepieciešamo daudzumu aprēķini pēc tehniskā patēriņa normas un atsevišķi norādi rezervi. Ja preces cenu nevar pārbaudīt, materiāla pozīciju SAGLABĀ, norādi cenu 0 un skaidru statusu \'cena nav pārbaudīta\'; tas NAV apgalvojums, ka materiāls ir bezmaksas.\n3. PVN: fiksē, vai veikala cena ir ar 21% PVN. Ja cena ir ar PVN, dalīšana ar 1,21 ir matemātisks pārrēķins, nevis jauna veikala cena; saglabā oriģinālo cenu un PVN statusu cenu avotu pielikumā. Ja PVN statuss nav zināms, NEPIEŅEM to automātiski un nepiešķir cenai statusu \'pārbaudīta cena bez PVN\'. Gala tāme ir bez PVN, PVN atsevišķi 21%.\n4. DARBU CENAS: meklē publiski pieejamus Latvijas būvniecības un remontdarbu pakalpojumu cenrāžus. Vienādo darba saturu, mērvienības, reģionu un PVN. Trīs izvēles: low = salīdzināmu zemāko publicēto piedāvājumu segments, mid = salīdzināmu piedāvājumu mediāna, high = salīdzināmu augstāko publicēto piedāvājumu segments. Nedrīkst izmantot fiksētus procentu koeficientus vai izdomāt tirgus sadalījumu. Ja ir tikai viens publicēts piedāvājums, NEUZDOD to par statistisku mediānu vai trīs neatkarīgiem līmeņiem. Ja datu nepietiek, atzīmē cenu kā provizorisku un paskaidro metodoloģiju. Saglabā avotā esošos centus; darba izmaksu aprēķinam norādi stundas un likmes, ja tās ir zināmas.\n5. IZMANTO TIKAI DATU AVOTUS no pievienotā PĀRBAUDĀMIE CENU AVOTI saraksta. \'source_ids\' drīkst norādīt tikai precīzai preces/darba un mērvienības sakritībai. Neuzdod AI meklēšanas fragmentu par neatkarīgi verificētu veikala cenu. Nekad neizdomā trūkstošās cenas, datumus vai avotus.\n6. Ja ir foto, atšķir redzamo no pieņēmumiem. Nenovērtē precīzus izmērus no attēla. Sagatavo atsevišķu apsekošanas akta PROJEKTU, neapgalvo, ka apsekošana jau veikta.\n7. Detalizē katru būvprocesu un katru materiālu atsevišķi, ieskaitot stiprinājumus, palīgmateriālus, demontāžu, montāžu, atkritumus, transportu tikai tad, ja tas ir attiecināms. Neizdomā vajadzību pēc darbiem.\n8. Nekad neapaļo cenu līdz veseliem eiro, desmitiem vai simtiem, ja avotā ir precīzi centi. Neģenerē nejaušus centus ticamības imitācijai. Arī reizinājumu un PVN aprēķinu veic programma.\n\nJSON SHĒMA: {"summary":"...", "rows":[{"name":"...", "unit":"gab.", "qty":1, "labor":0, "material":0, "machine":0, "category":"darbi vai materiali vai mehanismi", "source_ids":[]}], "act":{"observations":"...", "defects":"...", "recommendations":"...", "limitations":"..."}, "assumptions":["..."], "missing_data":["..."]}.\n'
+    instructions = 'Tu esi Latvijas būvdarbu tāmētājs un cenu datu analītiķis. Sagatavo detalizētu, pārbaudāmu būvdarbu tāmi latviešu valodā. Atgriez tikai JSON.\n\nOBLIGĀTĀS PRASĪBAS:\n1. NODALI DARBUS, MATERIĀLUS UN MEHĀNISMUS. Katrai pozīcijai norādi nosaukumu, mērvienību, daudzumu, darba vienības cenu (labor), materiāla vienības cenu (material), mehānisma vienības cenu (machine), avotu ID un kategoriju. Vienu izmaksu nedrīkst ieskaitīt divreiz. Neizdomā apjomus; nezināmo atzīmē assumptions/missing_data.\n2. MATERIĀLI: izmanto tikai KONKRĒTU Latvijas veikala preces lapu (piem., DEPO, K Senukai, Būvserviss vai cits Latvijas tirgotājs), kur pieejama preces identitāte, iepakojums, mērvienība, publicētā cena un tiešā saite. Saglabā precīzu publicēto cenu ar centiem (2,37 EUR ir 2,37, nevis 2,00 vai 2,50). NEDRĪKST izdomāt centus, cenas, SKU, saites vai pieejamību. Pārbaudi vienības atbilstību: gab./iepakojums/m²/m³/kg/l/m; ja vajag, aprēķini pārrēķinu no pārbaudīta iepakojuma izmēra. Nepieciešamo daudzumu aprēķini pēc tehniskā patēriņa normas un atsevišķi norādi rezervi. Ja preces cenu nevar pārbaudīt, materiāla pozīciju SAGLABĀ, norādi cenu 0 TIKAI kā nezināmas cenas tehnisko vietturi un skaidru statusu \'cena nav pārbaudīta\'; tas NAV apgalvojums, ka materiāls ir bezmaksas.\n3. PVN: fiksē, vai veikala cena ir ar 21% PVN. Ja cena ir ar PVN, dalīšana ar 1,21 ir matemātisks pārrēķins, nevis jauna veikala cena; saglabā oriģinālo cenu un PVN statusu cenu avotu pielikumā. Ja PVN statuss nav zināms, NEPIEŅEM to automātiski un nepiešķir cenai statusu \'pārbaudīta cena bez PVN\'. Gala tāme ir bez PVN, PVN atsevišķi 21%.\n4. DARBU CENAS: meklē publiski pieejamus Latvijas būvniecības un remontdarbu pakalpojumu cenrāžus. Vienādo darba saturu, mērvienības, reģionu un PVN. Trīs izvēles: low = salīdzināmu zemāko publicēto piedāvājumu segments, mid = salīdzināmu piedāvājumu mediāna, high = salīdzināmu augstāko publicēto piedāvājumu segments. Nedrīkst izmantot fiksētus procentu koeficientus vai izdomāt tirgus sadalījumu. Ja ir tikai viens publicēts piedāvājums, NEUZDOD to par statistisku mediānu vai trīs neatkarīgiem līmeņiem. Ja datu nepietiek, atzīmē cenu kā provizorisku un paskaidro metodoloģiju. Saglabā avotā esošos centus; darba izmaksu aprēķinam norādi stundas un likmes, ja tās ir zināmas.\n5. IZMANTO TIKAI DATU AVOTUS no pievienotā PĀRBAUDĀMIE CENU AVOTI saraksta. \'source_ids\' drīkst norādīt tikai precīzai preces/darba un mērvienības sakritībai. Neuzdod AI meklēšanas fragmentu par neatkarīgi verificētu veikala cenu. Nekad neizdomā trūkstošās cenas, datumus vai avotus.\n6. Ja ir foto, atšķir redzamo no pieņēmumiem. Nenovērtē precīzus izmērus no attēla. Sagatavo atsevišķu apsekošanas akta PROJEKTU, neapgalvo, ka apsekošana jau veikta.\n7. Detalizē katru būvprocesu un katru materiālu atsevišķi, ieskaitot stiprinājumus, palīgmateriālus, demontāžu, montāžu, atkritumus, transportu tikai tad, ja tas ir attiecināms. Neizdomā vajadzību pēc darbiem.\n8. Nekad neapaļo cenu līdz veseliem eiro, desmitiem vai simtiem, ja avotā ir precīzi centi. Neģenerē nejaušus centus ticamības imitācijai. Arī reizinājumu un PVN aprēķinu veic programma.\n\nJSON SHĒMA: {"summary":"...", "rows":[{"name":"...", "unit":"gab.", "qty":1, "labor":0, "material":0, "machine":0, "category":"darbi vai materiali vai mehanismi", "source_ids":[]}], "act":{"observations":"...", "defects":"...", "recommendations":"...", "limitations":"..."}, "assumptions":["..."], "missing_data":["..."]}.\n'
     try:
         client = OpenAI(api_key=key, timeout=48, max_retries=0)
         sources=verify_shop_prices(research_prices(client,description))
@@ -228,7 +243,7 @@ def estimate():
         pricing_report=apply_evidence_prices(rows,sources,price_level)
         if any(r.get('material_price_note') for r in rows):
             obj.setdefault('missing_data',[]).append('UZMANĪBU: materiālu cenas nav pilnībā pārbaudītas; kopsumma ir nepilnīga un nav izmantojama kā galīgais piedāvājums.')
-        return jsonify(pricing_report=pricing_report,material_prices_missing=sum(1 for r in rows if r.get('material_price_note')),success=True,estimate=obj.get('summary',''),rows=rows,act=obj['act'],assumptions=obj.get('assumptions',[]),missing_data=obj.get('missing_data',[]),price_sources=sources,price_verified=False,price_research_status="single_pass_shop_check_unverified_prices_provisional",price_checked_at=datetime.now().isoformat(timespec='seconds'),price_level=price_level)
+        return jsonify(estimate_complete=not any(r.get('pricing_status')=='incomplete' for r in rows),pricing_report=pricing_report,material_prices_missing=sum(1 for r in rows if r.get('material_price_note')),success=True,estimate=obj.get('summary',''),rows=rows,act=obj['act'],assumptions=obj.get('assumptions',[]),missing_data=obj.get('missing_data',[]),price_sources=sources,price_verified=False,price_research_status="source_only_with_explicit_missing_prices",price_checked_at=datetime.now().isoformat(timespec='seconds'),price_level=price_level)
     except Exception as exc:
         app.logger.exception('AI estimate failed')
         kind=type(exc).__name__
