@@ -36,7 +36,7 @@ def research_prices(client, description):
             "If only range available leave price_eur null. If unverified, OMIT it. Max 35 sources. Include at least two independently published offers per major work/material where possible. "
             "Today: "+today+". Job: "+description[:2800])
     try:
-        result=client.with_options(max_retries=0).responses.create(model=os.getenv('PRICE_RESEARCH_MODEL','gpt-4.1-mini'),tools=[{'type':'web_search_preview','search_context_size':'high'}],input=prompt,timeout=55)
+        result=client.with_options(max_retries=0).responses.create(model=os.getenv('PRICE_RESEARCH_MODEL','gpt-4.1-mini'),tools=[{'type':'web_search_preview','search_context_size':'medium'}],input=prompt,timeout=20)
         raw=result.output_text.strip();start=raw.find('{');end=raw.rfind('}')
         obj=json.loads(raw[start:end+1]) if start>=0 and end>start else {}
         sources=[]
@@ -97,10 +97,10 @@ def verify_shop_prices(sources):
         x['verification']='not_independently_verified'
         x['shop_verified']=False
         if x.get('category')!='material' or not _shop_host(str(x.get('url') or '')):continue
-        if checked>=18:break
+        if checked>=4:break
         checked+=1
         try:
-            response=session.get(x['url'],timeout=7,allow_redirects=True)
+            response=session.get(x['url'],timeout=2,allow_redirects=True)
             if response.status_code!=200 or len(response.content)>3_000_000 or not _shop_host(response.url):continue
             soup=BeautifulSoup(response.text,'html.parser')
             products=[]
@@ -177,9 +177,10 @@ def apply_evidence_prices(rows, sources, level):
             if prices:
                 # For the middle tier, median across comparable sources.
                 row[field]=round((min(prices),statistics.median(prices),max(prices))[chosen],2)
-        # An unsupported material price is not a shop price. Keep the line, but request verification.
+        # Strict shop-price policy: never retain model-generated material prices.
         if row.get('material',0)>0 and not any(by_id.get(sid,{}).get('category')=='material' and by_id.get(sid,{}).get('shop_verified') for sid in used):
-            row['material_price_note']='Veikala cena NAV pārbaudīta; norādītā summa ir AI provizoriska, nevis aktuāla veikala cena.'
+            row['material']=0.0
+            row['material_price_note']='Materiāla cena nav pārbaudīta Latvijas veikalā; nav iekļauta kopsummā.'
         row['evidence_ids']=list(dict.fromkeys(used))
         row['pricing_status']='shop_verified' if any(by_id.get(sid,{}).get('shop_verified') for sid in used) else ('web_search_based' if used else 'AI_estimate_unverified')
         report.append({'name':row['name'],'status':row['pricing_status'],'sources':row['evidence_ids']})
@@ -204,14 +205,9 @@ def estimate():
     for img in images[:3]:
         if isinstance(img, str) and img.startswith(('data:image/jpeg;base64,', 'data:image/png;base64,', 'data:image/webp;base64,')) and len(img)<6_000_000:
             content.append({'type':'image_url', 'image_url':{'url':img, 'detail':'low'}})
-    instructions = '''Tu esi profesionāls Latvijas būvdarbu tāmētājs. Atbildi latviski tikai JSON formātā.
-Sagatavo DETALIZĒTU, pārbaudāmu provizorisku tāmi un atsevišķu apsekošanas akta PROJEKTU.
-KRITISKI: nedrīkst vienā rindā rakstīt "Durvju nomaiņa". Katru procesu un materiālu nodali atsevišķās rindās. Durvju nomaiņai apsver: esošo durvju vērtnes demontāžu, kārbas demontāžu (ja nepieciešams), būvgružu izvešanu, ailas sagatavošanu un labošanas darbus, jaunu durvju bloku/vērtni, kārbu, eņģes, slēdzeni, rokturus, blīvējumu, stiprinājumus, montāžas putas, uzstādīšanas darbu, regulēšanu, apdari, transportu. Iekļauj tikai attiecināmos darbus, neizdomā prasības. Līdzīgi detalizē citus darbu veidus. Mērķis: vismaz 8–15 atsevišķas pozīcijas vienkāršai durvju nomaiņai, ja tās ir attiecināmas.
-Ja ir foto: analizē redzamos elementus, bet neapgalvo neredzamus defektus un NEIZSECINI precīzus izmērus no foto. Atšķir redzēto no pieņēmumiem. Ja durvju izmēri nav zināmi, uzskaiti vienību skaitu kā pieņēmumu (piem. 1 gab.), bet izmērus norādi pie precizējamiem datiem.
-Cenu pamatā OBLIGĀTI izmanto pievienotos meklēšanas avotus, ja tie atbilst darbam, vienībai un komplektācijai. Avotu cenu diapazoniem izvēlies low=apakšējo, mid=tipisko/mediānu, high=augšējo robežu, nevis vienkāršu procentu reizinātāju. Atsevišķi pārbaudi, vai avota cena ir ar PVN; tāmei jābūt bez PVN. Ja avotu nav, cenas ir tikai AI provizoriskas un nedrīkst uzdot par pārbaudītām. Nepieciešamos darbus un materiālus uzskaiti arī bez avotiem, norādot nenoteiktību. Cenas labor/material/machine ir atsevišķas VIENĪBAS provizoriskas cenas EUR bez PVN. Darba pozīcijās pārsvarā labor, materiālu pozīcijās pārsvarā material. Vienu izmaksu nedrīkst ieskaitīt divreiz. Izvēlies ticamus Latvijas tirgus segmenta cenu pieņēmumus, atsevišķi materiālus un darbu, neizmanto nepamatoti zemas simboliskas cenas. ĻOTI SVARĪGI: katrai rindai izmanto avotā publicēto precīzo EUR cenu ar centiem, ja avots to sniedz (piemēram 23.49, nevis 25 vai 20). Darba izmaksām aprēķini precīzu vienības cenu no reālas stundas likmes × reāli nepieciešamajām darba stundām; saglabā divas zīmes aiz komata. NEAPAĻO cenas līdz 10, 50, 100 vai veseliem eiro tikai tādēļ, lai tāme izskatītos glīta. Ja avots sniedz tikai aptuvenu diapazonu vai apaļu skaitli, saglabā to kā provizorisku un NEIZDOMĀ nejaušus centus, lai radītu maldīgu precizitāti. Norādi pieņēmumus par darba laiku un vienības cenām. Starpsummas un PVN aprēķina programma ar centu precizitāti. Ja nav aktuālu datu, to skaidri atzīmē. Neapgalvo, ka cenas ir pārbaudītas tirgū. Ja cenu nevar pamatoti novērtēt, ievadi 0 un norādi precizējumu. qty=0 tikai tad, ja pat provizorisks apjoms nav iespējams. Neizdomā apsekošanas datumu vai faktu, ka apsekošana ir veikta.
-Katrai rindai pievieno source_ids ar tikai tieši atbilstošajiem avotu ID (piem. ["S1","S3"]) un TIKAI tad, ja avota mērvienība sakrīt ar rindas mērvienību un darba/materiāla veids sakrīt. Ja nav tiešas atbilstības, source_ids=[]. Atgriez JSON ar struktūru: {"summary":"...", "rows":[{"name":"...", "unit":"gab.", "qty":1, "labor":0, "material":0, "machine":0, "category":"darbi vai materiali vai mehanismi", "source_ids":[]}], "act":{"observations":"...", "defects":"...", "recommendations":"...", "limitations":"..."}, "assumptions":["..."], "missing_data":["..."]}. Atgriez pēc iespējas konkrētas pozīcijas un materiālus; PVN 21% rēķina programma.'''
+    instructions = 'Tu esi Latvijas būvdarbu tāmētājs un cenu datu analītiķis. Sagatavo detalizētu, pārbaudāmu būvdarbu tāmi latviešu valodā. Atgriez tikai JSON.\n\nOBLIGĀTĀS PRASĪBAS:\n1. NODALI DARBUS, MATERIĀLUS UN MEHĀNISMUS. Katrai pozīcijai norādi nosaukumu, mērvienību, daudzumu, darba vienības cenu (labor), materiāla vienības cenu (material), mehānisma vienības cenu (machine), avotu ID un kategoriju. Vienu izmaksu nedrīkst ieskaitīt divreiz. Neizdomā apjomus; nezināmo atzīmē assumptions/missing_data.\n2. MATERIĀLI: izmanto tikai KONKRĒTU Latvijas veikala preces lapu (piem., DEPO, K Senukai, Būvserviss vai cits Latvijas tirgotājs), kur pieejama preces identitāte, iepakojums, mērvienība, publicētā cena un tiešā saite. Saglabā precīzu publicēto cenu ar centiem (2,37 EUR ir 2,37, nevis 2,00 vai 2,50). NEDRĪKST izdomāt centus, cenas, SKU, saites vai pieejamību. Pārbaudi vienības atbilstību: gab./iepakojums/m²/m³/kg/l/m; ja vajag, aprēķini pārrēķinu no pārbaudīta iepakojuma izmēra. Nepieciešamo daudzumu aprēķini pēc tehniskā patēriņa normas un atsevišķi norādi rezervi. Ja preces cenu nevar pārbaudīt, materiāla pozīciju SAGLABĀ, norādi cenu 0 un skaidru statusu \'cena nav pārbaudīta\'; tas NAV apgalvojums, ka materiāls ir bezmaksas.\n3. PVN: fiksē, vai veikala cena ir ar 21% PVN. Ja cena ir ar PVN, dalīšana ar 1,21 ir matemātisks pārrēķins, nevis jauna veikala cena; saglabā oriģinālo cenu un PVN statusu cenu avotu pielikumā. Ja PVN statuss nav zināms, NEPIEŅEM to automātiski un nepiešķir cenai statusu \'pārbaudīta cena bez PVN\'. Gala tāme ir bez PVN, PVN atsevišķi 21%.\n4. DARBU CENAS: meklē publiski pieejamus Latvijas būvniecības un remontdarbu pakalpojumu cenrāžus. Vienādo darba saturu, mērvienības, reģionu un PVN. Trīs izvēles: low = salīdzināmu zemāko publicēto piedāvājumu segments, mid = salīdzināmu piedāvājumu mediāna, high = salīdzināmu augstāko publicēto piedāvājumu segments. Nedrīkst izmantot fiksētus procentu koeficientus vai izdomāt tirgus sadalījumu. Ja ir tikai viens publicēts piedāvājums, NEUZDOD to par statistisku mediānu vai trīs neatkarīgiem līmeņiem. Ja datu nepietiek, atzīmē cenu kā provizorisku un paskaidro metodoloģiju. Saglabā avotā esošos centus; darba izmaksu aprēķinam norādi stundas un likmes, ja tās ir zināmas.\n5. IZMANTO TIKAI DATU AVOTUS no pievienotā PĀRBAUDĀMIE CENU AVOTI saraksta. \'source_ids\' drīkst norādīt tikai precīzai preces/darba un mērvienības sakritībai. Neuzdod AI meklēšanas fragmentu par neatkarīgi verificētu veikala cenu. Nekad neizdomā trūkstošās cenas, datumus vai avotus.\n6. Ja ir foto, atšķir redzamo no pieņēmumiem. Nenovērtē precīzus izmērus no attēla. Sagatavo atsevišķu apsekošanas akta PROJEKTU, neapgalvo, ka apsekošana jau veikta.\n7. Detalizē katru būvprocesu un katru materiālu atsevišķi, ieskaitot stiprinājumus, palīgmateriālus, demontāžu, montāžu, atkritumus, transportu tikai tad, ja tas ir attiecināms. Neizdomā vajadzību pēc darbiem.\n8. Nekad neapaļo cenu līdz veseliem eiro, desmitiem vai simtiem, ja avotā ir precīzi centi. Neģenerē nejaušus centus ticamības imitācijai. Arī reizinājumu un PVN aprēķinu veic programma.\n\nJSON SHĒMA: {"summary":"...", "rows":[{"name":"...", "unit":"gab.", "qty":1, "labor":0, "material":0, "machine":0, "category":"darbi vai materiali vai mehanismi", "source_ids":[]}], "act":{"observations":"...", "defects":"...", "recommendations":"...", "limitations":"..."}, "assumptions":["..."], "missing_data":["..."]}.\n'
     try:
-        client = OpenAI(api_key=key, timeout=75, max_retries=0)
+        client = OpenAI(api_key=key, timeout=48, max_retries=0)
         sources=verify_shop_prices(research_prices(client,description))
         evidence=json.dumps(sources,ensure_ascii=False)[:18000]
         content[0]['text'] += '\nPĀRBAUDĀMIE CENU AVOTI (no tīmekļa meklēšanas): '+evidence+'\nJa avotu nav vai tie nav pietiekami, cenas atzīmē kā NEPĀRBAUDĪTAS un neapgalvo, ka tās ir tirgus vidējās.'
@@ -226,21 +222,13 @@ Katrai rindai pievieno source_ids ar tikai tieši atbilstošajiem avotu ID (piem
                 try:return max(0,min(float(r.get(k) or 0),1e8))
                 except (ValueError,TypeError):return 0
             rows.append(dict(name=str(r.get('name') or '')[:300],unit=str(r.get('unit') or 'gab.')[:20],qty=num('qty'),labor=num('labor'),material=num('material'),machine=num('machine'),category=str(r.get('category') or 'darbi')[:30],source_ids=r.get('source_ids') or []))
-        # Second targeted search: real product descriptions are known only after the
-        # estimate was generated. This is much more specific than the initial search.
-        material_names=[r['name'] for r in rows if r.get('category','').lower().startswith('mater') or (r.get('material',0)>0 and r.get('labor',0)==0)]
-        if material_names:
-            material_query=('Find exact retail PRODUCT pages with publicly shown EUR prices for these materials in Latvia, '
-                            'prefer ksenukai.lv, buvserviss.lv, kurshi.lv, depo.lv. '
-                            'Only return matching product offers, no general category pages. Products: '
-                            + '; '.join(material_names[:18]))
-            additional=verify_shop_prices(research_prices(client,material_query))
-            for x in additional:
-                if x.get('category')!='material':continue
-                x['id']='S'+str(len(sources)+1)
-                sources.append(x)
+        # Keep estimate requests below hosting proxy timeout. A second synchronous
+        # AI web search previously caused browser "Failed to fetch" errors.
+        # Unverified material prices remain visibly provisional, never "shop verified".
         pricing_report=apply_evidence_prices(rows,sources,price_level)
-        return jsonify(pricing_report=pricing_report,material_prices_missing=sum(1 for r in rows if r.get('material_price_note')),success=True,estimate=obj.get('summary',''),rows=rows,act=obj['act'],assumptions=obj.get('assumptions',[]),missing_data=obj.get('missing_data',[]),price_sources=sources,price_verified=False,price_research_status="shop_jsonld_checked_vat_may_be_unknown",price_checked_at=datetime.now().isoformat(timespec='seconds'),price_level=price_level)
+        if any(r.get('material_price_note') for r in rows):
+            obj.setdefault('missing_data',[]).append('UZMANĪBU: materiālu cenas nav pilnībā pārbaudītas; kopsumma ir nepilnīga un nav izmantojama kā galīgais piedāvājums.')
+        return jsonify(pricing_report=pricing_report,material_prices_missing=sum(1 for r in rows if r.get('material_price_note')),success=True,estimate=obj.get('summary',''),rows=rows,act=obj['act'],assumptions=obj.get('assumptions',[]),missing_data=obj.get('missing_data',[]),price_sources=sources,price_verified=False,price_research_status="single_pass_shop_check_unverified_prices_provisional",price_checked_at=datetime.now().isoformat(timespec='seconds'),price_level=price_level)
     except Exception as exc:
         app.logger.exception('AI estimate failed')
         kind=type(exc).__name__
