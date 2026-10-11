@@ -14,6 +14,8 @@ from flask_cors import CORS
 from openai import OpenAI
 
 app = Flask(__name__)
+from estimator_agent import bp as estimator_agent_bp
+app.register_blueprint(estimator_agent_bp)
 from pricing_v2 import bp as pricing_v2_bp
 app.register_blueprint(pricing_v2_bp)
 from pricing_live import bp as pricing_live_bp
