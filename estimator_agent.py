@@ -208,49 +208,85 @@ def export_agent_document():
             doc.add_paragraph(safe(result.get('disclaimer')))
         stream=io.BytesIO();doc.save(stream);stream.seek(0)
         return send_file(stream,as_attachment=True,download_name=('CIVINITY_Akts' if kind=='act' else 'CIVINITY_Tame')+'.docx',mimetype='application/vnd.openxmlformats-officedocument.wordprocessingml.document')
-    from reportlab.platypus import SimpleDocTemplate,Paragraph,Spacer,LongTable,TableStyle,KeepTogether
+    # Unified A4 portrait design for every company. Pricing evidence starts on a new page.
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, LongTable, Table, TableStyle, PageBreak, Image as RLImage
     from reportlab.lib import colors
-    from reportlab.lib.styles import getSampleStyleSheet,ParagraphStyle
-    from reportlab.lib.enums import TA_LEFT
-    from reportlab.lib.pagesizes import A4,landscape
+    from reportlab.lib.styles import ParagraphStyle
+    from reportlab.lib.pagesizes import A4
     from reportlab.pdfbase import pdfmetrics
     from reportlab.pdfbase.ttfonts import TTFont
-    font='Helvetica'
-    for path in ['/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf','/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf']:
-        if os.path.exists(path):
-            try:pdfmetrics.registerFont(TTFont('CivinityUnicode',path));font='CivinityUnicode';break
+    from xml.sax.saxutils import escape as xml_escape
+    navy=colors.HexColor('#102F4F');blue=colors.HexColor('#13618D');pale=colors.HexColor('#EAF2F8');gray=colors.HexColor('#CAD7E1')
+    regular='/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'
+    bold='/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf'
+    if 'CivinityRegular' not in pdfmetrics.getRegisteredFontNames():pdfmetrics.registerFont(TTFont('CivinityRegular',regular))
+    if 'CivinityBold' not in pdfmetrics.getRegisteredFontNames():pdfmetrics.registerFont(TTFont('CivinityBold',bold))
+    body_style=ParagraphStyle('bodyc',fontName='CivinityRegular',fontSize=7.5,leading=11,spaceAfter=5)
+    tiny=ParagraphStyle('tinyc',parent=body_style,fontSize=6.4,leading=9,spaceAfter=1)
+    white=ParagraphStyle('whitec',parent=tiny,fontName='CivinityBold',textColor=colors.white)
+    h1=ParagraphStyle('h1c',parent=body_style,fontName='CivinityBold',fontSize=14,leading=19,textColor=navy,spaceAfter=9)
+    h2=ParagraphStyle('h2c',parent=body_style,fontName='CivinityBold',fontSize=9,leading=13,textColor=navy,spaceBefore=9)
+    def para(v,style=body_style):return Paragraph(xml_escape(safe(v)).replace('\n','<br/>'),style)
+    buffer=io.BytesIO()
+    doc=SimpleDocTemplate(buffer,pagesize=A4,leftMargin=29,rightMargin=29,topMargin=31,bottomMargin=35,title=title,author=heading)
+    width=A4[0]-58
+    def header():
+        left=[para(heading,h1),para('Reģ. Nr.: '+safe(company.get('reg')),tiny),para(safe(company.get('address')),tiny),para('Banka: '+safe(company.get('bank'))+'  |  IBAN: '+safe(company.get('iban')),tiny)]
+        logo=company.get('logo','');image=None
+        if isinstance(logo,str) and logo.startswith('data:image/'):
+            try:
+                from PIL import Image as PILImage
+                raw=base64.b64decode(logo.split(',',1)[1]);im=PILImage.open(io.BytesIO(raw));im.thumbnail((600,180));out=io.BytesIO();im.convert('RGB').save(out,format='PNG');out.seek(0)
+                w,h=im.size;scale=min(125/max(w,1),47/max(h,1));image=RLImage(out,width=w*scale,height=h*scale)
             except Exception:pass
-    buf=io.BytesIO();pdf=SimpleDocTemplate(buf,pagesize=landscape(A4) if kind=='estimate' else A4,rightMargin=30,leftMargin=30,topMargin=30,bottomMargin=35)
-    styles=getSampleStyleSheet();normal=ParagraphStyle('CivNorm',parent=styles['Normal'],fontName=font,fontSize=8,leading=12,spaceAfter=5)
-    hstyle=ParagraphStyle('CivHead',parent=normal,fontSize=17,leading=22,textColor=colors.HexColor('#0A3960'))
-    sub=ParagraphStyle('CivSub',parent=normal,fontSize=11,leading=15,textColor=colors.HexColor('#0A3960'),spaceBefore=11)
-    def para(t,sty=normal):return Paragraph(escape(safe(t)).replace('\n','<br/>'),sty)
-    story=[para(heading,hstyle),para(details),Spacer(1,12),para(title,hstyle),para(objline),para('Datums: '+safe(obj.get('date'))),Spacer(1,8)]
-    logo=company.get('logo','')
-    if isinstance(logo,str) and logo.startswith('data:image/'):
-        try:
-            from reportlab.platypus import Image as RLImage
-            from PIL import Image as PILImage
-            binary=base64.b64decode(logo.split(',',1)[1]);im=PILImage.open(io.BytesIO(binary));w,h=im.size;scale=min(140/w,50/h,1)
-            story.insert(0,RLImage(io.BytesIO(binary),width=w*scale,height=h*scale))
-        except Exception:pass
+        head=Table([[left,image or para('',tiny)]],colWidths=[width-137,137]);head.setStyle(TableStyle([('VALIGN',(0,0),(-1,-1),'TOP'),('BOTTOMPADDING',(0,0),(-1,-1),12),('LINEBELOW',(0,0),(-1,-1),1.5,blue)]))
+        return head
+    story=[header(),Spacer(1,12),para(title,h1),para(objline),para('Datums: '+safe(obj.get('date') or obj.get('inspectionDate'))),para('Pasūtītājs: '+safe(obj.get('customer'))),Spacer(1,7)]
     if kind=='act':
-        for h,t in entries:story.extend([para(h,sub),para(t or 'Nav norādīts')])
-        story.append(para('Akta projekts. Konstatējumi jāpārbauda klātienē pirms parakstīšanas.'))
+        for section,text in entries:story.extend([para(section,h2),para(text or 'Nav norādīts')])
+        story.append(Spacer(1,12));story.append(para('Dokuments ir apsekošanas akta projekts. Pirms parakstīšanas konstatējumi jāpārbauda klātienē.',tiny))
     else:
-        story.append(para(result.get('summary','')))
-        head=['Pozīcija','Mērv.','Daudz.','Darbs €/v.','Mat. €/v.','Meh. €/v.','Kopā €']
-        data=[[para(v) for v in head]]
+        if result.get('summary'):story.append(para(result.get('summary')))
+        # 8 columns fit the printable width of A4 portrait (537 pt).
+        columns=[21,180,34,39,58,65,64,66]
+        assert sum(columns)<=width
+        labels=['Nr.','Darbu un materiālu nosaukums','Mērv.','Daudz.','Darbi €/v.','Materiāli €/v.','Mehān. €/v.','Summa €']
+        grid=[[para(v,white) for v in labels]]
+        row_count=0;section_rows=[]
         for e in entries:
-            if e[0]=='SECTION':data.append([para(e[1],sub)]+['']*6);continue
+            if e[0]=='SECTION':
+                section_rows.append(len(grid));grid.append([para(e[1],h2)]+['']*7)
+                continue
             _,name,unit,q,lab,mat,mach,total,status,url=e
-            data.append([para(name+' ['+status+']'),para(unit),para(f'{q:g}'),para(f'{lab:.2f}'),para(f'{mat:.2f}'),para(f'{mach:.2f}'),para(f'{total:.2f}')])
-        table=LongTable(data,colWidths=[250,55,65,85,85,85,80],repeatRows=1,hAlign='LEFT')
-        table.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,0),colors.HexColor('#143D61')),('TEXTCOLOR',(0,0),(-1,0),colors.white),('ROWBACKGROUNDS',(0,1),(-1,-1),[colors.white,colors.HexColor('#f1f6fb')]),('GRID',(0,0),(-1,-1),.3,colors.HexColor('#d5e2ec')),('VALIGN',(0,0),(-1,-1),'TOP'),('LEFTPADDING',(0,0),(-1,-1),5),('RIGHTPADDING',(0,0),(-1,-1),5)]))
-        story.extend([table,Spacer(1,12)])
-        for k,label in [('subtotal','Kopā bez PVN'),('vat','PVN 21%'),('total','Kopā ar PVN')]:story.append(para(label+': '+f'{num(result.get(k)):.2f} EUR',sub))
-        story.append(para('Cenu avoti un pieņēmumi',sub))
-        for o in (result.get('market_offers') or [])[:80]:story.append(para(safe(o.get('supplier'))+' — '+safe(o.get('product'))+' — '+safe(o.get('url'))))
-        story.append(para(result.get('disclaimer','')))
-    pdf.build(story);buf.seek(0)
-    return send_file(buf,as_attachment=True,download_name=('CIVINITY_Akts' if kind=='act' else 'CIVINITY_Tame')+'.pdf',mimetype='application/pdf')
+            row_count+=1
+            grid.append([para(str(row_count),tiny),para(name,tiny),para(unit,tiny),para(f'{q:g}',tiny),para(f'{lab:.2f}',tiny),para(f'{mat:.2f}',tiny),para(f'{mach:.2f}',tiny),para(f'{total:.2f}',tiny)])
+        table=LongTable(grid,colWidths=columns,repeatRows=1,hAlign='LEFT')
+        commands=[('BACKGROUND',(0,0),(-1,0),navy),('VALIGN',(0,0),(-1,-1),'TOP'),('LINEBELOW',(0,0),(-1,-1),.35,gray),('ROWBACKGROUNDS',(0,1),(-1,-1),[colors.white,colors.HexColor('#F6F9FC')]),('LEFTPADDING',(0,0),(-1,-1),3),('RIGHTPADDING',(0,0),(-1,-1),3),('TOPPADDING',(0,0),(-1,-1),5),('BOTTOMPADDING',(0,0),(-1,-1),5)]
+        for i in section_rows:commands.extend([('BACKGROUND',(0,i),(-1,i),pale),('SPAN',(0,i),(-1,i))])
+        table.setStyle(TableStyle(commands));story.append(table)
+        story.append(Spacer(1,13))
+        totals=[('Kopā bez PVN',num(result.get('subtotal'))),('PVN 21%',num(result.get('vat'))),('PAVISAM KOPĀ',num(result.get('total')))]
+        summary=Table([[para(label,h2 if n==2 else body_style),para(f'{value:,.2f} EUR',h2 if n==2 else body_style)] for n,(label,value) in enumerate(totals)],colWidths=[width-130,130]);summary.setStyle(TableStyle([('ALIGN',(1,0),(1,-1),'RIGHT'),('BACKGROUND',(0,2),(-1,2),pale),('LINEABOVE',(0,2),(-1,2),1,blue)]));story.append(summary)
+        if result.get('disclaimer'):story.append(Spacer(1,10));story.append(para(result['disclaimer'],tiny))
+        # Pricing evidence is deliberately NOT part of the estimate's main pages.
+        story.append(PageBreak());story.append(header());story.append(Spacer(1,10));story.append(para('PIELIKUMS Nr. 1 — CENU PAMATOJUMS UN PIEŅĒMUMI',h1))
+        story.append(para('Šis pielikums ir atsevišķs no tāmes pamatdaļas. Piegādātāju cenas, PVN, pieejamība un specifikācija jāpārbauda pirms pasūtījuma.',tiny))
+        offers=result.get('market_offers') or []
+        if offers:
+            evidence=[[para('Nr.',white),para('Piegādātājs / produkts',white),para('Cena / informācija',white),para('Avots',white)]]
+            for n,o in enumerate(offers,1):
+                if not isinstance(o,dict):continue
+                price=o.get('price_eur',o.get('price',''))
+                label=' / '.join(filter(None,[safe(o.get('supplier')),safe(o.get('product') or o.get('title'))]))
+                evidence.append([para(str(n),tiny),para(label,tiny),para(safe(price)+' '+safe(o.get('unit')),tiny),para(safe(o.get('url')),tiny)])
+            t=LongTable(evidence,colWidths=[23,170,85,width-278],repeatRows=1)
+            t.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,0),navy),('VALIGN',(0,0),(-1,-1),'TOP'),('ROWBACKGROUNDS',(0,1),(-1,-1),[colors.white,pale]),('LINEBELOW',(0,0),(-1,-1),.3,gray),('LEFTPADDING',(0,0),(-1,-1),5),('RIGHTPADDING',(0,0),(-1,-1),5)]));story.append(t)
+        else:story.append(para('Pārbaudāmi cenu avoti nav pievienoti. Tāmes cenas uzskatāmas par provizoriskām.'))
+        story.append(Spacer(1,12));story.append(para('Cenu un apjomu pieņēmumi',h2))
+        if result.get('assumptions'):
+            for item in result['assumptions'][:60]:story.append(para('• '+safe(item),tiny))
+        else:story.append(para('Pirms darbu uzsākšanas pārbaudīt apjomus, tehnoloģiju, transporta izmaksas un piegādes nosacījumus.',tiny))
+    def page_footer(canvas,doc):
+        canvas.saveState();canvas.setStrokeColor(gray);canvas.line(29,27,A4[0]-29,27);canvas.setFont('CivinityRegular',7);canvas.setFillColor(colors.HexColor('#64748B'));canvas.drawString(29,16,safe(company.get('name') or 'CIVINITY'));canvas.drawRightString(A4[0]-29,16,f'{doc.page}');canvas.restoreState()
+    doc.build(story,onFirstPage=page_footer,onLaterPages=page_footer);buffer.seek(0)
+    return send_file(buffer,as_attachment=True,download_name=('CIVINITY_Akts' if kind=='act' else 'CIVINITY_Tame')+'.pdf',mimetype='application/pdf')
