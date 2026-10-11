@@ -110,7 +110,7 @@ def export_xlsx():
     ws.merge_cells('A1:H1');ws['A1']=str(c.get('name') or 'CIVINITY')[:180];ws['A1'].font=Font(size=19,bold=True,color='0A3960')
     ws.merge_cells('A2:H2');ws['A2']=' | '.join(str(c.get(k) or '') for k in ('reg','address','iban','bank'))[:400]
     ws.merge_cells('A4:H4');ws['A4']=str(r.get('title') or 'BŪVDARBU TĀME');ws['A4'].font=Font(size=15,bold=True,color='0A3960')
-    ws.merge_cells('A5:H5');ws['A5']=str(data.get('object') or '')
+    ws.merge_cells('A5:H5');obj=data.get('object') or {};ws['A5']=('Objekts: '+str(obj.get('name') or '')+' | Adrese: '+str(obj.get('address') or '')) if isinstance(obj,dict) else str(obj)
     ws.append([]);ws.append(['Nr.','Pozīcija / specifikācija','Mērv.','Daudz.','Darbs €/v.','Materiāli €/v.','Mehānismi €/v.','Kopā bez PVN €'])
     for cell in ws[7]:cell.fill=PatternFill('solid',fgColor='143D61');cell.font=Font(color='FFFFFF',bold=True)
     n=0
@@ -148,3 +148,109 @@ def export_xlsx():
         except Exception:pass
     buf=io.BytesIO();wb.save(buf);buf.seek(0)
     return send_file(buf,mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',as_attachment=True,download_name='CIVINITY_AI_Tame_Agent.xlsx')
+
+
+@bp.post('/api/agent/document')
+def export_agent_document():
+    """Create estimate or draft inspection act with selected company branding."""
+    from flask import abort
+    from xml.sax.saxutils import escape
+    body=request.get_json(silent=True) or {}
+    result=body.get('result') or {}; company=body.get('company') or {}; obj=body.get('object') or {}; act=body.get('act') or {}
+    kind=body.get('kind','estimate');fmt=body.get('format','pdf')
+    if kind not in ('estimate','act') or fmt not in ('pdf','docx') or not isinstance(result.get('sections'),list):
+        return jsonify(error='Nepareizs dokumenta pieprasījums'),400
+    def safe(x):return str(x if x is not None else '')[:2500]
+    def num(x):
+        try:return float(x or 0)
+        except (TypeError,ValueError):return 0.
+    title='APSEKOŠANAS AKTA PROJEKTS' if kind=='act' else 'BŪVDARBU TĀME'
+    heading=safe(company.get('name') or 'CIVINITY')
+    details=' | '.join(filter(None,[safe(company.get(k)) for k in ('reg','address','bank','iban')]))
+    objline='Objekts: '+safe(obj.get('name'))+' | Adrese: '+safe(obj.get('address'))
+    entries=[]
+    if kind=='act':
+        entries=[('Konstatētais',safe(act.get('observations'))),('Defekti un riski',safe(act.get('defects'))),('Ieteicamie darbi',safe(act.get('recommendations'))),('Apsekošanas ierobežojumi',safe(act.get('limitations'))),('Apsekotājs',safe(act.get('inspector'))),('Pasūtītājs',safe(act.get('customer')))]
+    else:
+        for section in result['sections']:
+            entries.append(('SECTION',safe(section.get('name'))))
+            for i in section.get('items',[]):
+                q=num(i.get('quantity')); price=num(i.get('labor'))+num(i.get('material'))+num(i.get('machine'))
+                entries.append(('ITEM',safe(i.get('name')),safe(i.get('unit')),q,num(i.get('labor')),num(i.get('material')),num(i.get('machine')),round(q*price,2),safe(i.get('status')),safe(i.get('source_url'))))
+    if fmt=='docx':
+        from docx import Document
+        from docx.shared import Inches,Pt,RGBColor
+        doc=Document();sec=doc.sections[0];sec.header_distance=Inches(.35)
+        doc.add_heading(heading,0)
+        if details:doc.add_paragraph(details)
+        doc.add_heading(title,1);doc.add_paragraph(objline)
+        doc.add_paragraph('Datums: '+safe(obj.get('date')))
+        logo=company.get('logo','')
+        if isinstance(logo,str) and logo.startswith('data:image/'):
+            try:doc.add_picture(io.BytesIO(base64.b64decode(logo.split(',',1)[1])),width=Inches(1.5))
+            except Exception:pass
+        if kind=='act':
+            for h,t in entries:doc.add_heading(h,2);doc.add_paragraph(t or 'Nav norādīts')
+            doc.add_paragraph('Dokuments ir projekta stadijā; nepieciešama atbildīgās personas faktu pārbaude un paraksts.')
+        else:
+            doc.add_paragraph(safe(result.get('summary')))
+            table=doc.add_table(rows=1,cols=7);table.style='Table Grid'
+            for c,v in zip(table.rows[0].cells,['Pozīcija','Mērv.','Daudz.','Darbs €/v.','Materiāli €/v.','Mehānismi €/v.','Kopā €']):c.text=v
+            for e in entries:
+                if e[0]=='SECTION':
+                    cells=table.add_row().cells;cells[0].text=e[1];continue
+                _,name,unit,q,lab,mat,mach,total,status,url=e
+                cells=table.add_row().cells
+                for c,v in zip(cells,[name+' ('+status+')',unit,f'{q:g}',f'{lab:.2f}',f'{mat:.2f}',f'{mach:.2f}',f'{total:.2f}']):c.text=v
+            for key,label in [('subtotal','Kopā bez PVN'),('vat','PVN 21%'),('total','Kopā ar PVN')]:doc.add_paragraph(label+': '+f'{num(result.get(key)):.2f} EUR')
+            doc.add_heading('Cenu avoti',2)
+            for o in (result.get('market_offers') or [])[:80]:doc.add_paragraph(safe(o.get('supplier'))+' — '+safe(o.get('product'))+' — '+safe(o.get('url')))
+            doc.add_paragraph(safe(result.get('disclaimer')))
+        stream=io.BytesIO();doc.save(stream);stream.seek(0)
+        return send_file(stream,as_attachment=True,download_name=('CIVINITY_Akts' if kind=='act' else 'CIVINITY_Tame')+'.docx',mimetype='application/vnd.openxmlformats-officedocument.wordprocessingml.document')
+    from reportlab.platypus import SimpleDocTemplate,Paragraph,Spacer,LongTable,TableStyle,KeepTogether
+    from reportlab.lib import colors
+    from reportlab.lib.styles import getSampleStyleSheet,ParagraphStyle
+    from reportlab.lib.enums import TA_LEFT
+    from reportlab.lib.pagesizes import A4,landscape
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.ttfonts import TTFont
+    font='Helvetica'
+    for path in ['/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf','/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf']:
+        if os.path.exists(path):
+            try:pdfmetrics.registerFont(TTFont('CivinityUnicode',path));font='CivinityUnicode';break
+            except Exception:pass
+    buf=io.BytesIO();pdf=SimpleDocTemplate(buf,pagesize=landscape(A4) if kind=='estimate' else A4,rightMargin=30,leftMargin=30,topMargin=30,bottomMargin=35)
+    styles=getSampleStyleSheet();normal=ParagraphStyle('CivNorm',parent=styles['Normal'],fontName=font,fontSize=8,leading=12,spaceAfter=5)
+    hstyle=ParagraphStyle('CivHead',parent=normal,fontSize=17,leading=22,textColor=colors.HexColor('#0A3960'))
+    sub=ParagraphStyle('CivSub',parent=normal,fontSize=11,leading=15,textColor=colors.HexColor('#0A3960'),spaceBefore=11)
+    def para(t,sty=normal):return Paragraph(escape(safe(t)).replace('\n','<br/>'),sty)
+    story=[para(heading,hstyle),para(details),Spacer(1,12),para(title,hstyle),para(objline),para('Datums: '+safe(obj.get('date'))),Spacer(1,8)]
+    logo=company.get('logo','')
+    if isinstance(logo,str) and logo.startswith('data:image/'):
+        try:
+            from reportlab.platypus import Image as RLImage
+            from PIL import Image as PILImage
+            binary=base64.b64decode(logo.split(',',1)[1]);im=PILImage.open(io.BytesIO(binary));w,h=im.size;scale=min(140/w,50/h,1)
+            story.insert(0,RLImage(io.BytesIO(binary),width=w*scale,height=h*scale))
+        except Exception:pass
+    if kind=='act':
+        for h,t in entries:story.extend([para(h,sub),para(t or 'Nav norādīts')])
+        story.append(para('Akta projekts. Konstatējumi jāpārbauda klātienē pirms parakstīšanas.'))
+    else:
+        story.append(para(result.get('summary','')))
+        head=['Pozīcija','Mērv.','Daudz.','Darbs €/v.','Mat. €/v.','Meh. €/v.','Kopā €']
+        data=[[para(v) for v in head]]
+        for e in entries:
+            if e[0]=='SECTION':data.append([para(e[1],sub)]+['']*6);continue
+            _,name,unit,q,lab,mat,mach,total,status,url=e
+            data.append([para(name+' ['+status+']'),para(unit),para(f'{q:g}'),para(f'{lab:.2f}'),para(f'{mat:.2f}'),para(f'{mach:.2f}'),para(f'{total:.2f}')])
+        table=LongTable(data,colWidths=[250,55,65,85,85,85,80],repeatRows=1,hAlign='LEFT')
+        table.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,0),colors.HexColor('#143D61')),('TEXTCOLOR',(0,0),(-1,0),colors.white),('ROWBACKGROUNDS',(0,1),(-1,-1),[colors.white,colors.HexColor('#f1f6fb')]),('GRID',(0,0),(-1,-1),.3,colors.HexColor('#d5e2ec')),('VALIGN',(0,0),(-1,-1),'TOP'),('LEFTPADDING',(0,0),(-1,-1),5),('RIGHTPADDING',(0,0),(-1,-1),5)]))
+        story.extend([table,Spacer(1,12)])
+        for k,label in [('subtotal','Kopā bez PVN'),('vat','PVN 21%'),('total','Kopā ar PVN')]:story.append(para(label+': '+f'{num(result.get(k)):.2f} EUR',sub))
+        story.append(para('Cenu avoti un pieņēmumi',sub))
+        for o in (result.get('market_offers') or [])[:80]:story.append(para(safe(o.get('supplier'))+' — '+safe(o.get('product'))+' — '+safe(o.get('url'))))
+        story.append(para(result.get('disclaimer','')))
+    pdf.build(story);buf.seek(0)
+    return send_file(buf,as_attachment=True,download_name=('CIVINITY_Akts' if kind=='act' else 'CIVINITY_Tame')+'.pdf',mimetype='application/pdf')
