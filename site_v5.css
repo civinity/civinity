@@ -1,0 +1,82 @@
+/* CIVINITY AI V5: auth */
+#u_gate{background:radial-gradient(ellipse at 70% 0%,#195985 0%,transparent 45%),linear-gradient(145deg,#061c33,#0b345c 80%)}
+#u_gate .u-login-card{width:min(100%,390px);padding:36px 34px 27px;border-radius:20px;box-shadow:0 24px 85px #00152a88;text-align:center}
+#u_gate .u-login-brand{margin-bottom:25px}#u_gate .u-logo{font-size:36px;letter-spacing:.08em;margin:0;font-weight:900}
+#u_gate .u-login-brand p{margin:8px 0 0;font-size:12px;letter-spacing:.04em}
+#u_gate #d_auth{border:0;background:transparent;padding:0;margin:0;max-width:none;box-shadow:none;text-align:left}
+#u_gate #d_auth>.grid2{display:flex;flex-direction:column;gap:11px}
+#u_gate #d_auth .grid2 label{font-size:0!important;margin:0!important}
+#u_gate #d_auth .grid2 label input{font-size:14px!important;height:48px;min-height:48px;border-radius:10px;padding:12px 14px}
+#u_gate #d_email::placeholder,#u_gate #d_password::placeholder{color:#8294a6}
+#u_gate #d_auth button.btn{display:block;width:100%;margin:17px 0 0;min-height:47px;background:#0865a0;border:0;color:white;font-weight:800}
+#u_gate #d_auth button.btn.alt{background:#eaf4fc;color:#15527b;margin-top:12px}
+#u_gate #d_auth>p{display:none}#u_gate #d_message{font-size:12px;text-align:center;margin-top:10px}
+#u_gate .u-auth-actions{display:flex;justify-content:space-between;gap:8px;margin-top:15px}
+#u_gate .u-auth-actions button{background:none;border:0;color:#0b5b8e;font-size:12px;cursor:pointer;padding:6px 0}
+#u_forgot_note{font-size:12px;line-height:1.45;background:#fff6df;color:#684900;padding:12px;border-radius:10px;margin-top:12px;text-align:left}
+/* Full-screen dispatcher: existing global sidebar is hidden only while viewing tasks */
+body.civi-tasks-mode .layout{display:block!important;padding:0!important}
+body.civi-tasks-mode .layout>aside{display:none!important}
+body.civi-tasks-mode main{margin:0!important;max-width:none!important;width:100%!important;padding:0 24px 30px!important;overflow:visible}
+body.civi-tasks-mode .topbar{display:none!important}
+body.civi-tasks-mode #dispatch{width:100%;max-width:none}
+body.civi-tasks-mode #dispatch>.section-hero{display:none!important}
+body.civi-tasks-mode #dispatch>.panel{padding:0!important;border:0!important;box-shadow:none!important;background:transparent!important}
+body.civi-tasks-mode #dispatch .d-shell{display:block!important;margin:14px 0 0!important}
+body.civi-tasks-mode #dispatch .d-menu{display:none!important}
+body.civi-tasks-mode #dispatch .d-content{width:100%!important}
+body.civi-tasks-mode #dispatch .d-heading{margin-bottom:14px}
+body.civi-tasks-mode #dispatch .d-welcome{display:none!important}
+body.civi-tasks-mode #dispatch .d-view[data-view="home"]{display:none!important}
+body.civi-tasks-mode #dispatch .d-card{padding:20px}
+#civi-task-header{display:none}
+body.civi-tasks-mode #civi-task-header{display:block;position:sticky;top:0;z-index:80;background:#f2f6fb;border-bottom:1px solid #dce6f1;margin:0 -24px 14px;padding:12px 24px 0;box-shadow:0 5px 20px #0d2d4b12}
+.ct-bar{display:flex;align-items:center;gap:17px;min-height:48px}.ct-home{border:1px solid #c9dced;background:white;border-radius:11px;padding:11px 15px;color:#13446a;font-weight:800;cursor:pointer}.ct-title{display:flex;flex-direction:column}.ct-title strong{font-size:21px;color:#0c3356}.ct-title small{color:#7289a0;font-size:11px}.ct-right{margin-left:auto;color:#5b7189;font-size:12px;padding-right:62px}
+.ct-metrics .d-stats{display:grid!important;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin:12px 0!important}
+.ct-metrics .d-stat{padding:13px 18px!important;background:white!important;border:1px solid #dce7f1;border-radius:13px}
+.ct-metrics .d-stat strong{font-size:24px!important}.ct-nav{display:flex;gap:5px;overflow-x:auto;border-bottom:1px solid #dce7f1}
+.ct-nav .d-navbtn{display:inline-flex!important;gap:8px;align-items:center;border:0;background:transparent;padding:12px 17px;color:#49637b;font-weight:700;white-space:nowrap;cursor:pointer;border-bottom:3px solid transparent}
+.ct-nav .d-navbtn.active{color:#075b91;border-bottom-color:#1689c1;background:#e6f3fd;border-radius:8px 8px 0 0}
+.ct-nav .d-navbtn[hidden],.ct-nav .d-navbtn[style*="display: none"]{display:none!important}
+.ct-nav .d-icon{font-size:18px}
+/* Profile anchored to upper right, condensed enough for a laptop viewport */
+body.site-authenticated #profileShortcut{position:fixed!important;right:17px!important;top:13px!important;z-index:120!important;width:40px;height:40px;box-shadow:0 3px 14px #0d3a5c30}
+#civi-profile-pop{max-height:calc(100vh - 72px)!important;width:min(355px,calc(100vw - 20px))!important;border-radius:14px!important}
+#civi-profile-pop .cp-head{padding:11px 14px!important;gap:9px!important}
+#civi-profile-pop .cp-photo{width:45px!important;height:45px!important}
+#civi-profile-pop .cp-head strong{font-size:15px!important}
+#civi-profile-pop .cp-body{padding:10px 14px!important}
+#civi-profile-pop .cp-tag{margin:0 4px 7px 0!important;padding:4px 7px!important;font-size:10px!important}
+#civi-profile-pop .cp-stats{margin:4px 0 9px!important;gap:5px!important}
+#civi-profile-pop .cp-stat{padding:7px 3px!important}
+#civi-profile-pop .cp-stat b{font-size:16px!important}
+#civi-profile-pop .cp-field{margin:6px 0!important}
+#civi-profile-pop .cp-field label{margin-bottom:3px!important;font-size:11px!important}
+#civi-profile-pop .cp-field input{padding:7px 9px!important;font-size:12px!important}
+#civi-profile-pop .cp-actions{margin-top:9px!important;gap:5px!important}
+#civi-profile-pop .cp-btn{padding:8px 10px!important;font-size:12px!important}
+#civi-profile-pop .cp-photo-upload{margin-top:3px!important;font-size:10px!important}
+#civi-profile-pop .cp-photo-upload input{font-size:10px!important}
+/* Temporarily hide prices navigation without deleting pricing code */
+#nav [data-page="prices"],#mobileNav [data-go="prices"]{display:none!important}
+@media(max-width:750px){body.civi-tasks-mode main{padding:0 10px 20px!important}body.civi-tasks-mode #civi-task-header{margin:0 -10px 12px;padding:9px 10px 0}.ct-metrics .d-stats{grid-template-columns:repeat(2,minmax(0,1fr));gap:7px}.ct-metrics .d-stat{padding:9px!important}.ct-nav .d-navbtn{padding:11px 10px;font-size:12px}.ct-title strong{font-size:17px}.ct-right{display:none}}
+
+/* V5.1 — unified left-side navigation in the existing blue CIVINITY sidebar */
+body.civi-tasks-mode .layout{display:grid!important;grid-template-columns:238px minmax(0,1fr)!important;padding:0!important}
+body.civi-tasks-mode .layout>aside{display:block!important;min-height:100vh!important}
+body.civi-tasks-mode main{margin:0!important;width:auto!important;max-width:none!important;padding:20px 25px 40px!important}
+body.civi-tasks-mode .topbar{display:flex!important}
+body.civi-tasks-mode #dispatch{width:100%}
+body.civi-tasks-mode #dispatch .d-shell{display:block!important;margin:14px 0 0!important}
+#civi-task-header{display:none!important}
+#civi-dispatch-nav{display:none;padding:3px 0 10px 15px;margin:0 0 7px;border-left:2px solid #2d76a6}
+body.civi-tasks-mode #civi-dispatch-nav{display:block}
+#civi-dispatch-nav .civi-subnav-label{color:#a6cce5;font-size:10px;font-weight:800;letter-spacing:1.5px;padding:10px 10px 6px}
+#civi-dispatch-nav .civi-subnav-button{display:flex;width:100%;align-items:center;gap:9px;border:0;background:transparent;color:#d9eafa;text-align:left;padding:11px 10px;margin:2px 0;border-radius:9px;font:600 13px Inter,Arial,sans-serif;cursor:pointer}
+#civi-dispatch-nav .civi-subnav-button:hover,#civi-dispatch-nav .civi-subnav-button.active{background:#0b639f;color:white}
+#civi-dispatch-nav .civi-subnav-button[hidden],#civi-dispatch-nav .civi-subnav-button[style*="display: none"]{display:none!important}
+#civi-dispatch-nav .d-icon{font-size:18px;width:21px;flex-shrink:0}
+#dispatch #d_workspace>.d-profile{display:none!important}
+body.civi-tasks-mode #dispatch>.panel{padding:0!important}
+@media(max-width:1200px){body.civi-tasks-mode .layout{grid-template-columns:205px minmax(0,1fr)!important}}
+@media(max-width:850px){body.civi-tasks-mode .layout{display:block!important}body.civi-tasks-mode .layout>aside{min-height:0!important}body.civi-tasks-mode .layout>aside #nav{display:flex!important;flex-wrap:wrap;gap:3px}#civi-dispatch-nav{width:100%;flex-basis:100%;padding-left:0;display:none}body.civi-tasks-mode #civi-dispatch-nav{display:flex;flex-wrap:wrap;gap:4px}#civi-dispatch-nav .civi-subnav-label{width:100%}#civi-dispatch-nav .civi-subnav-button{width:auto;padding:9px}body.civi-tasks-mode main{padding:12px!important}}
