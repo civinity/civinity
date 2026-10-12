@@ -8,12 +8,44 @@ const gate=document.createElement('div');gate.id='u_gate';gate.innerHTML='<div c
 document.body.append(gate);
 const auth=$('d_auth'),msg=$('d_message');$('u_auth_host').append(auth,msg);
 async function request(path,method='GET',data){const r=await fetch(BASE+path,{method,headers:{Authorization:'Bearer '+token(),...(data?{'Content-Type':'application/json'}:{})},body:data?JSON.stringify(data):undefined});let j;try{j=await r.json()}catch{j={}}if(!r.ok)throw Error(j.error||`HTTP ${r.status}`);return j;}
-function setGate(allowed){document.body.classList.toggle('site-authenticated',!!allowed);if(!allowed){remoteReady=false;currentUser=null;gate.style.display='grid';}else gate.style.display='none';}
-async function verify(){if(gateBusy)return;gateBusy=true;try{if(!token()){setGate(false);return;}const user=await request('/me');if(!user.approved){setGate(false);return;}currentUser=user;setGate(true);await loadObjects();}catch(e){setGate(false);msg.textContent='Sesija beigusies. Lūdzu, pieslēdzieties vēlreiz.';}finally{gateBusy=false;}}
-const workspace=$('d_workspace');new MutationObserver(()=>{if(!workspace.classList.contains('hidden')&&token())verify();else if(!token())setGate(false)}).observe(workspace,{attributes:true,attributeFilter:['class']});
-const oldLogout=window.dispatchLogout;window.dispatchLogout=async function(){await oldLogout();setGate(false);};
-const oldLogin=window.dispatchLogin;window.dispatchLogin=async function(){await oldLogin();if(token())await verify();};
-const oldRegister=window.dispatchRegister;window.dispatchRegister=async function(){await oldRegister();};
+function setGate(allowed){
+ document.body.classList.toggle('site-authenticated',Boolean(allowed));
+ gate.style.display=allowed?'none':'grid';
+ if(!allowed){remoteReady=false;currentUser=null;}
+}
+// Authentication is the ONLY condition controlling access to the main interface.
+// Object sync or dispatcher data errors must never force a second login.
+async function loadObjectsSafely(){
+ try{await loadObjects();}
+ catch(e){console.warn('Object sync unavailable:',e);const status=$('u_sync_status');if(status)status.textContent='Objektu sinhronizācija īslaicīgi nav pieejama.';}
+}
+async function verify(){
+ if(gateBusy)return;
+ gateBusy=true;
+ try{
+  if(!token()){setGate(false);return;}
+  let user;
+  try{user=await request('/me');}
+  catch(e){setGate(false);msg.textContent='Sesija beigusies. Lūdzu, pieslēdzieties vēlreiz.';return;}
+  if(!user || user.approved!==true){setGate(false);msg.textContent='Konts gaida administratora apstiprinājumu.';return;}
+  currentUser=user;
+  setGate(true);
+  // Do not await unrelated data loads while deciding if the user is authenticated.
+  void loadObjectsSafely();
+ }finally{gateBusy=false;}
+}
+const oldLogout=window.dispatchLogout;
+window.dispatchLogout=async function(){
+ try{if(typeof oldLogout==='function')await oldLogout();}
+ finally{sessionStorage.removeItem('dispatch_token');setGate(false);}
+};
+const oldLogin=window.dispatchLogin;
+window.dispatchLogin=async function(){
+ if(typeof oldLogin==='function')await oldLogin();
+ if(token())await verify();
+};
+const oldRegister=window.dispatchRegister;
+window.dispatchRegister=async function(){if(typeof oldRegister==='function')await oldRegister();};
 function objCode(o){return String(o.code||'').trim().toLowerCase()}
 async function loadObjects(){remote=await request('/objects');remoteReady=true;renderUnifiedObjects();}
 function objectData(){const raw={name:$('name').value.trim(),address:$('address').value.trim(),code:$('u_code').value.trim(),ownership:$('u_owner').value.trim(),customer:$('u_customer').value.trim(),contract:$('u_contract').value.trim(),company:$('company').value,rate:Number($('u_rate').value||0),vat:Number($('u_vat').value||21),radius:Number($('u_radius').value||150)};raw.latitude=$('u_lat').value?Number($('u_lat').value):null;raw.longitude=$('u_lon').value?Number($('u_lon').value):null;return raw;}
