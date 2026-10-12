@@ -70,5 +70,6 @@ const oldRender=window.renderObjects;window.renderObjects=function(){if(remoteRe
 // Route object management from dispatcher to the existing site section.
 const nav=$('dispatch')?.querySelector('.d-menu');if(nav){const b=document.createElement('button');b.type='button';b.className='d-navbtn';b.innerHTML='<span class="d-icon">▦</span><span>Objekti un līgumi ↗</span>';b.onclick=()=>window.page('objects');nav.append(b);}
 // Keep registration available on login screen; the account approval remains with admin.
-setGate(false);verify();
+setGate(false); // Stay on login until the user explicitly submits credentials.
+
 })();

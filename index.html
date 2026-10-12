@@ -462,4 +462,6 @@ window.CIVINITY_BIM_SET_RESULT=function(r){window.CIVINITY_BIM_RESULT=r;by('bimE
   });
 })();
 </script>
-<script src="dispatch_ui.js"></script><script src="dispatch_design.js"></script><script src="unified_site.js"></script><script src="profile_menu.js"></script></body></html>
+<script>/* Require explicit login on every new page load. */
+try { sessionStorage.removeItem("dispatch_token"); } catch(e) {}
+</script><script src="dispatch_ui.js"></script><script src="dispatch_design.js"></script><script src="unified_site.js"></script><script src="profile_menu.js"></script></body></html>
