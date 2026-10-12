@@ -1,5 +1,5 @@
 """CIVINITY dispatcher: server-side access control, PostgreSQL storage, time events and PN acts."""
-import os, io, secrets, hashlib, math, json
+import os, re, io, secrets, hashlib, math, json
 from datetime import datetime, timezone, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 from functools import wraps
@@ -26,7 +26,7 @@ ROLES={'administrators','vaditajs','parvaldnieks','meistars','arpakalpojums'}
 
 class User(Base):
  __tablename__='d_users'
- id=Column(Integer,primary_key=True); name=Column(String(160),nullable=False); email=Column(String(250),unique=True,nullable=False); password=Column(String(256),nullable=False); role=Column(String(40),default='meistars'); approved=Column(Boolean,default=False); active=Column(Boolean,default=True); created=Column(DateTime(timezone=True),default=NOW)
+ id=Column(Integer,primary_key=True); name=Column(String(160),nullable=False); email=Column(String(250),unique=True,nullable=False); password=Column(String(256),nullable=False); role=Column(String(40),default='meistars'); approved=Column(Boolean,default=False); active=Column(Boolean,default=True); created=Column(DateTime(timezone=True),default=NOW); department=Column(String(120),default=''); position=Column(String(120),default=''); avatar=Column(Text,default='')
 class Token(Base):
  __tablename__='d_tokens'
  id=Column(Integer,primary_key=True); user_id=Column(Integer,ForeignKey('d_users.id')); digest=Column(String(64),unique=True); expires=Column(DateTime(timezone=True))
@@ -57,6 +57,13 @@ class Audit(Base):
 
 if engine:
  Base.metadata.create_all(engine)
+ # Idempotent additive migration for existing PostgreSQL installations.
+ from sqlalchemy import inspect, text as sql_text
+ with engine.begin() as connection:
+  existing={c['name'] for c in inspect(connection).get_columns('d_users')}
+  for field, typ in [('department','VARCHAR(120)'),('position','VARCHAR(120)'),('avatar','TEXT')]:
+   if field not in existing:
+    connection.execute(sql_text(f'ALTER TABLE d_users ADD COLUMN {field} {typ}'))
  # Bootstrap administrator only with explicit environment credentials.
  if os.getenv('DISPATCH_ADMIN_EMAIL') and os.getenv('DISPATCH_ADMIN_PASSWORD'):
   with Session.begin() as s:
@@ -85,7 +92,7 @@ def auth(f):
 def allowed(*roles):return g.user.role in roles or g.user.role=='administrators'
 def guard(*roles):return None if allowed(*roles) else error('Nepietiek tiesību',403)
 def audit(kind,ref,detail=''):g.db.add(Audit(actor=g.user.id,kind=kind,ref=ref,detail=detail))
-def json_user(u):return dict(id=u.id,name=u.name,email=u.email,role=u.role,approved=u.approved)
+def json_user(u):return dict(id=u.id,name=u.name,email=u.email,role=u.role,approved=u.approved,department=u.department or '',position=u.position or '',avatar=u.avatar or '')
 def obj_dict(o):return dict(id=o.id,name=o.name,address=o.address,code=o.code,ownership=o.ownership,company=o.company,customer=o.customer,contract=o.contract,rate=float(o.rate or 0),vat=float(o.vat or 21),latitude=float(o.latitude) if o.latitude is not None else None,longitude=float(o.longitude) if o.longitude is not None else None,radius=o.radius,manager_id=o.manager_id)
 def object_access(o):return allowed('vaditajs') or (g.user.role=='parvaldnieks' and o.manager_id==g.user.id)
 def task_access(t):
@@ -133,6 +140,36 @@ def logout():
 @bp.get('/me')
 @auth
 def me():return jsonify(json_user(g.user))
+@bp.patch('/me')
+@auth
+def update_my_profile():
+ p=request.get_json(silent=True) or {}
+ u=g.user
+ if 'name' in p:
+  name=str(p['name']).strip()
+  if len(name)<2 or len(name)>160:return error('Vārds jānorāda 2–160 rakstzīmēs')
+  u.name=name
+ if 'position' in p:
+  value=str(p['position']).strip()
+  if len(value)>120:return error('Amats pārāk garš')
+  u.position=value
+ if 'avatar' in p:
+  value=str(p['avatar'])
+  if value and (len(value)>180000 or not re.fullmatch(r'data:image/(?:png|jpeg|webp);base64,[A-Za-z0-9+/=]+',value)):
+   return error('Atļauts tikai neliels PNG, JPEG vai WebP attēls')
+  u.avatar=value
+ # Department, role, approval and email remain administrator-managed.
+ audit('profile_updated',u.id);g.db.commit()
+ return jsonify(json_user(u))
+
+@bp.get('/me/stats')
+@auth
+def my_statistics():
+ q=g.db.query(Task).filter_by(worker_id=g.user.id)
+ rows=q.all()
+ approved=[t for t in rows if t.status in ('apstiprinats','pabeigts')]
+ return jsonify(assigned=len(rows),completed=len(approved),active=len([t for t in rows if t.status not in ('apstiprinats','pabeigts','atcelts')]),minutes=sum(minutes(t) for t in approved))
+
 @bp.get('/users')
 @auth
 def users():
@@ -150,6 +187,8 @@ def user_update(uid):
   u.role=p['role']
  if 'approved' in p:u.approved=bool(p['approved'])
  if 'active' in p:u.active=bool(p['active'])
+ if 'department' in p:u.department=str(p['department']).strip()[:120]
+ if 'position' in p:u.position=str(p['position']).strip()[:120]
  audit('user_update',uid,json.dumps(p));g.db.commit();return jsonify(json_user(u))
 @bp.get('/objects')
 @auth

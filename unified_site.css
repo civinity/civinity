@@ -1,0 +1,14 @@
+
+body:not(.site-authenticated)>.layout{display:none!important}
+#u_gate{position:fixed;inset:0;z-index:99999;display:grid;place-items:center;padding:20px;background:linear-gradient(135deg,#061d37,#0b4779 60%,#e9f4fc);font-family:Inter,Arial,sans-serif}
+body.site-authenticated #u_gate{display:none!important}
+.u-login-card{width:min(100%,520px);padding:34px;background:#fff;border:1px solid #dce8f4;border-radius:20px;box-shadow:0 24px 80px #041b3455}
+.u-logo{color:#07355d;font-size:30px;font-weight:850;letter-spacing:.14em;margin-bottom:7px}.u-logo span{color:#16a2df}
+.u-login-card h1{margin:12px 0 5px;color:#102c4b;font-size:24px}.u-login-card p{color:#60758a}.u-login-card label{display:block;color:#26425d;font-weight:650;margin:13px 0 4px}
+.u-login-card input{box-sizing:border-box;width:100%;min-height:45px;padding:10px 13px;border:1px solid #bfd3e5;border-radius:10px;background:#f8fbff;font:inherit}
+.u-login-card input:focus{outline:2px solid #4ba7de}.u-login-card .btn{border-radius:10px;min-height:43px;margin:8px 8px 0 0}
+#u_gate #d_auth{display:block!important}#u_gate #d_auth h2{display:none}#u_gate #d_auth .grid2{display:block}
+#u_gate #d_auth .grid2 label{display:block}#u_gate #d_message{min-height:20px;font-size:14px}
+.unified-contract{margin:18px 0;padding:20px;border:1px solid #c6d9ec;border-radius:14px;background:#f5faff}.unified-contract h3{color:#0b3f69;margin-top:0}
+.u-server-badge{display:inline-block;padding:3px 9px;border-radius:12px;background:#e0f4e9;color:#12613e;font-size:12px}.u-local-badge{display:inline-block;padding:3px 9px;border-radius:12px;background:#fff0d5;color:#8a5713;font-size:12px}
+@media(max-width:600px){.u-login-card{padding:22px}#u_gate{padding:12px}}
