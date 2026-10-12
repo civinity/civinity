@@ -32,7 +32,10 @@ class Token(Base):
  id=Column(Integer,primary_key=True); user_id=Column(Integer,ForeignKey('d_users.id')); digest=Column(String(64),unique=True); expires=Column(DateTime(timezone=True))
 class Object(Base):
  __tablename__='d_objects'
- id=Column(Integer,primary_key=True); name=Column(String(200)); address=Column(String(300),nullable=False); code=Column(String(80),unique=True); ownership=Column(String(100)); company=Column(String(60)); customer=Column(String(240)); contract=Column(String(120)); rate=Column(Numeric(12,2),default=0); vat=Column(Numeric(5,2),default=21); latitude=Column(Numeric(12,8)); longitude=Column(Numeric(12,8)); radius=Column(Integer,default=150); manager_id=Column(Integer,ForeignKey('d_users.id')); contract_included=Column(Boolean,default=False)
+ id=Column(Integer,primary_key=True); name=Column(String(200)); address=Column(String(300),nullable=False); code=Column(String(80),unique=True); ownership=Column(String(100)); company=Column(String(60)); customer=Column(String(240)); contract=Column(String(120)); rate=Column(Numeric(12,2),default=0); vat=Column(Numeric(5,2),default=21); latitude=Column(Numeric(12,8)); longitude=Column(Numeric(12,8)); radius=Column(Integer,default=150); manager_id=Column(Integer,ForeignKey('d_users.id')); contract_included=Column(Boolean,default=False); cadastral_number=Column(String(90),default='')
+class ObjectFile(Base):
+ __tablename__='d_object_files'
+ id=Column(Integer,primary_key=True); object_id=Column(Integer,ForeignKey('d_objects.id'),nullable=False,index=True); filename=Column(String(255),nullable=False); mime=Column(String(120),nullable=False); category=Column(String(32),nullable=False); content=Column(LargeBinary,nullable=False); created=Column(DateTime(timezone=True),default=NOW); uploader=Column(Integer,ForeignKey('d_users.id'))
 class Rate(Base):
  __tablename__='d_rates'
  id=Column(Integer,primary_key=True); object_id=Column(Integer,ForeignKey('d_objects.id')); department=Column(String(120)); rate=Column(Numeric(12,2)); effective_from=Column(String(10))
@@ -64,6 +67,9 @@ if engine:
   for field, typ in [('department','VARCHAR(120)'),('position','VARCHAR(120)'),('avatar','TEXT')]:
    if field not in existing:
     connection.execute(sql_text(f'ALTER TABLE d_users ADD COLUMN {field} {typ}'))
+  obj_columns={c['name'] for c in inspect(connection).get_columns('d_objects')}
+  if 'cadastral_number' not in obj_columns:
+   connection.execute(sql_text("ALTER TABLE d_objects ADD COLUMN cadastral_number VARCHAR(90) DEFAULT ''"))
  # Bootstrap administrator only with explicit environment credentials.
  if os.getenv('DISPATCH_ADMIN_EMAIL') and os.getenv('DISPATCH_ADMIN_PASSWORD'):
   with Session.begin() as s:
@@ -93,7 +99,7 @@ def allowed(*roles):return g.user.role in roles or g.user.role=='administrators'
 def guard(*roles):return None if allowed(*roles) else error('Nepietiek tiesību',403)
 def audit(kind,ref,detail=''):g.db.add(Audit(actor=g.user.id,kind=kind,ref=ref,detail=detail))
 def json_user(u):return dict(id=u.id,name=u.name,email=u.email,role=u.role,approved=u.approved,department=u.department or '',position=u.position or '',avatar=u.avatar or '')
-def obj_dict(o):return dict(id=o.id,name=o.name,address=o.address,code=o.code,ownership=o.ownership,company=o.company,customer=o.customer,contract=o.contract,rate=float(o.rate or 0),vat=float(o.vat or 21),latitude=float(o.latitude) if o.latitude is not None else None,longitude=float(o.longitude) if o.longitude is not None else None,radius=o.radius,manager_id=o.manager_id)
+def obj_dict(o):return dict(id=o.id,name=o.name,address=o.address,code=o.code,ownership=o.ownership,company=o.company,customer=o.customer,contract=o.contract,rate=float(o.rate or 0),vat=float(o.vat or 21),latitude=float(o.latitude) if o.latitude is not None else None,longitude=float(o.longitude) if o.longitude is not None else None,radius=o.radius,manager_id=o.manager_id,cadastral_number=o.cadastral_number or '')
 def object_access(o):return allowed('vaditajs') or (g.user.role=='parvaldnieks' and o.manager_id==g.user.id)
 def task_access(t):
  o=g.db.get(Object,t.object_id)
@@ -203,8 +209,11 @@ def objects():
 def create_object():
  if e:=guard('vaditajs'):return e
  p=request.get_json(silent=True) or {}
- if not p.get('address') or not p.get('code'):return error('Adrese un objekta kods obligāti')
- o=Object(**{k:p.get(k) for k in ('name','address','code','ownership','company','customer','contract','rate','vat','latitude','longitude','radius','manager_id') if k in p});g.db.add(o)
+ if not p.get('code'):
+  import uuid
+  p['code']='OBJ-'+uuid.uuid4().hex[:12]
+ if p.get('address') is None:p['address']=''
+ o=Object(**{k:p.get(k) for k in ('name','address','code','ownership','company','customer','contract','rate','vat','latitude','longitude','radius','manager_id','cadastral_number') if k in p});g.db.add(o)
  try:g.db.flush();audit('object_created',o.id);g.db.commit()
  except Exception:g.db.rollback();return error('Objekta kods jau eksistē vai dati neder',409)
  return jsonify(obj_dict(o)),201
@@ -215,9 +224,65 @@ def update_object(oid):
  if not o:return error('Nav atrasts',404)
  if not object_access(o):return error('Nav piekļuves',403)
  p=request.get_json(silent=True) or {}
- for k in ('name','address','ownership','company','customer','contract','rate','vat','latitude','longitude','radius','manager_id'):
+ for k in ('name','address','ownership','company','customer','contract','rate','vat','latitude','longitude','radius','manager_id','cadastral_number'):
   if k in p:setattr(o,k,p[k])
  audit('object_updated',oid,json.dumps(p));g.db.commit();return jsonify(obj_dict(o))
+def object_visible(o):
+ if not o:return False
+ if object_access(o):return True
+ if g.user.role in ('meistars','arpakalpojums'):
+  return g.db.query(Task.id).filter_by(object_id=o.id,worker_id=g.user.id).first() is not None
+ return False
+
+@bp.get('/objects/<int:oid>/files')
+@auth
+def object_files(oid):
+ o=g.db.get(Object,oid)
+ if not object_visible(o):return error('Nav piekļuves',403)
+ rows=g.db.query(ObjectFile).filter_by(object_id=oid).order_by(ObjectFile.created.desc()).all()
+ return jsonify([dict(id=x.id,filename=x.filename,mime=x.mime,category=x.category,created=x.created.isoformat() if x.created else '') for x in rows])
+
+@bp.post('/objects/<int:oid>/files')
+@auth
+def object_file_upload(oid):
+ o=g.db.get(Object,oid)
+ if not o or not object_access(o):return error('Nav piekļuves',403)
+ file=request.files.get('file'); category=request.form.get('category','document')
+ if category not in ('document','cadastre','photo'):return error('Nepareiza kategorija')
+ if not file or not file.filename:return error('Izvēlieties failu')
+ content=file.read(10*1024*1024+1)
+ if not content or len(content)>10*1024*1024:return error('Fails nedrīkst pārsniegt 10 MB',413)
+ from werkzeug.utils import secure_filename
+ filename=secure_filename(file.filename) or 'dokuments'
+ mime=(file.mimetype or '').lower()
+ allowed_types={'application/pdf','image/jpeg','image/png','image/webp','application/msword','application/vnd.openxmlformats-officedocument.wordprocessingml.document','application/vnd.ms-excel','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}
+ if mime not in allowed_types:return error('Atļauti PDF, JPG, PNG, WEBP, DOC, DOCX, XLS, XLSX')
+ if category=='photo' and not mime.startswith('image/'):return error('Fotogrāfijai jābūt attēlam')
+ if category=='cadastre' and mime not in ('application/pdf','image/jpeg','image/png','image/webp'):return error('Kadastram nepieciešams PDF vai attēls')
+ if category in ('cadastre','photo'):
+  g.db.query(ObjectFile).filter_by(object_id=oid,category=category).delete(synchronize_session=False)
+ record=ObjectFile(object_id=oid,filename=filename,mime=mime,category=category,content=content,uploader=g.user.id)
+ g.db.add(record);g.db.flush();audit('object_file_uploaded',oid,category+':'+filename);g.db.commit()
+ return jsonify(id=record.id,filename=filename,category=category),201
+
+@bp.get('/objects/<int:oid>/files/<int:fid>')
+@auth
+def object_file_download(oid,fid):
+ o=g.db.get(Object,oid)
+ if not object_visible(o):return error('Nav piekļuves',403)
+ file=g.db.query(ObjectFile).filter_by(id=fid,object_id=oid).first()
+ if not file:return error('Fails nav atrasts',404)
+ return send_file(io.BytesIO(file.content),mimetype=file.mime,as_attachment=(request.args.get('download')=='1'),download_name=file.filename)
+
+@bp.delete('/objects/<int:oid>/files/<int:fid>')
+@auth
+def object_file_delete(oid,fid):
+ o=g.db.get(Object,oid)
+ if not o or not object_access(o):return error('Nav piekļuves',403)
+ file=g.db.query(ObjectFile).filter_by(id=fid,object_id=oid).first()
+ if not file:return error('Fails nav atrasts',404)
+ g.db.delete(file);audit('object_file_deleted',oid,str(fid));g.db.commit();return jsonify(ok=True)
+
 @bp.get('/tasks')
 @auth
 def tasks():
@@ -409,3 +474,41 @@ def pn_pdf(pid):
    for m in mats:elements.append(para(f'{m.name}: {m.qty} {m.unit} × {m.price} EUR = {D(D(m.qty)*D(m.price))} EUR'))
  doc.build(elements);out.seek(0)
  return send_file(out,mimetype='application/pdf',as_attachment=True,download_name=f'PN-{p.year}-{p.month:02d}-{p.id:04d}.pdf')
+
+
+@bp.get('/invoices/<int:pid>/pdf')
+@auth
+def invoice_pdf(pid):
+ """Invoice draft from PN; restricted on server to administrators and vaditajs."""
+ if e:=guard('vaditajs'):return e
+ pn=g.db.get(PN,pid)
+ if not pn:return error('Akts nav atrasts',404)
+ o=g.db.get(Object,pn.object_id)
+ if not o:return error('Objekts nav atrasts',404)
+ ts=g.db.query(Task).filter_by(pn_id=pid).order_by(Task.id).all()
+ if not ts:return error('Aktā nav darbu',400)
+ company=json.loads(pn.company_json or '{}')
+ out=io.BytesIO()
+ font='/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'
+ if os.path.isfile(font):
+  if 'DejaVu' not in pdfmetrics.getRegisteredFontNames():pdfmetrics.registerFont(TTFont('DejaVu',font))
+  face='DejaVu'
+ else:face='Helvetica'
+ styles=getSampleStyleSheet(); normal=ParagraphStyle('invnormal',parent=styles['Normal'],fontName=face,fontSize=9,leading=13)
+ title=ParagraphStyle('invtitle',parent=normal,fontSize=18,leading=23,spaceAfter=15)
+ para=lambda x:Paragraph(escape(str(x if x is not None else '')),normal)
+ doc=SimpleDocTemplate(out,pagesize=A4,leftMargin=36,rightMargin=36,topMargin=36,bottomMargin=36)
+ supplier=company.get('name') or company.get('legalName') or o.company or ''
+ elements=[Paragraph('RĒĶINA PROJEKTS',title),para('Dokumenta numurs: INV-PN-'+str(pn.year)+'-'+str(pn.month).zfill(2)+'-'+str(pn.id).zfill(4)),para('Datums: '+NOW().strftime('%d.%m.%Y')),Spacer(1,12),para('Pakalpojuma sniedzējs: '+supplier),para('Reģ. Nr.: '+str(company.get('reg') or company.get('regNo') or '—')),para('PVN Nr.: '+str(company.get('vat') or '—')),para('Adrese: '+str(company.get('address') or '—')),Spacer(1,9),para('Pasūtītājs: '+str(o.customer or '—')),para('Objekts: '+str(o.address)),para('Pamatojums: PN-'+str(pn.year)+'-'+str(pn.month).zfill(2)+'-'+str(pn.id).zfill(4)),Spacer(1,14)]
+ rows=[[para('Nr.'),para('Darbi'),para('Summa bez PVN, EUR')]]
+ total=Decimal('0')
+ for i,t in enumerate(ts,1):
+  d=task_dict(t);amount=D(d['total']);total+=amount
+  rows.append([para(i),para(t.completed or t.description or 'Darbi'),para(f'{amount:.2f}')])
+ tab=Table(rows,colWidths=[35,365,115],repeatRows=1)
+ tab.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,0),colors.HexColor('#173b60')),('TEXTCOLOR',(0,0),(-1,0),colors.white),('GRID',(0,0),(-1,-1),.3,colors.grey),('VALIGN',(0,0),(-1,-1),'TOP'),('BOTTOMPADDING',(0,0),(-1,-1),7)]))
+ vat=D(total*D(o.vat)/100)
+ elements.extend([tab,Spacer(1,14),para(f'Kopā bez PVN: {total:.2f} EUR'),para(f'PVN ({o.vat}%): {vat:.2f} EUR'),para(f'Kopā apmaksai: {D(total+vat):.2f} EUR'),Spacer(1,18),para('PROJEKTS — pirms izsniegšanas pārbaudiet rekvizītus, rēķina numuru, apmaksas termiņu un bankas kontu.')])
+ doc.build(elements);out.seek(0)
+ audit('invoice_draft_pdf',pid,'PN rēķina projekts');g.db.commit()
+ return send_file(out,mimetype='application/pdf',as_attachment=True,download_name=f'REKINS_PROJEKTS_PN_{pid}.pdf')
