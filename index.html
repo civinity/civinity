@@ -204,7 +204,7 @@ main{max-width:none;padding:22px 28px}.topbar{background:white;border:1px solid 
  .table-scroll table{min-width:690px}#rowsWrap table{min-width:780px}
 }
 @page{size:A4;margin:0} @media print{.mobile-nav,.hero{display:none!important}#printArea{padding:18mm 15mm!important}}
-</style>`;download(`${company}_${kind}_${Date.now()}.doc`,'\ufeff<html><head><meta charset="utf-8">'+css+'</head><body>'+docHtml(kind)+'<script src="dispatch_ui.js"></script></body></html>','application/msword;charset=utf-8')}
+</style>`;download(`${company}_${kind}_${Date.now()}.doc`,'\ufeff<html><head><meta charset="utf-8">'+css+'</head><body>'+docHtml(kind)+'</body></html>','application/msword;charset=utf-8')}
 function saveDoc(kind){if(!saveObject())return;documents.unshift({id:String(Date.now()),kind,object:snapshot(),company,created:new Date().toISOString()});put('documents',documents);alert('Dokuments saglabāts lokālajā arhīvā.')}
 $('printEstimate').onclick=()=>printDoc('estimate');$('printAct').onclick=()=>printDoc('act');$('printOffer').onclick=()=>printDoc('offer');$('wordEstimate').onclick=()=>wordDoc('estimate');$('wordAct').onclick=()=>wordDoc('act');$('saveEstimate').onclick=()=>saveDoc('estimate');$('saveAct').onclick=()=>saveDoc('act');
 $('csv').onclick=()=>{const lines=[['Nr.','Nosaukums','Mērv.','Daudz.','Darbi EUR','Materiāli EUR','Mehānismi EUR','Kopā EUR'],...rows.map((r,i)=>[i+1,r.name,r.unit,r.qty,r.labor,r.material,r.machine,rowSum(r)]),['','','','','','','Kopā bez PVN',subtotal()],['','','','','','','PVN 21%',subtotal()*.21],['','','','','','','Kopā ar PVN',subtotal()*1.21]];download('tame_'+company+'.csv','\ufeff'+lines.map(row=>row.map(x=>'"'+String(x).replaceAll('"','""')+'"').join(';')).join('\r\n'),'text/csv;charset=utf-8')};
