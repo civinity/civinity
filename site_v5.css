@@ -80,3 +80,18 @@ body.civi-tasks-mode #civi-dispatch-nav{display:block}
 body.civi-tasks-mode #dispatch>.panel{padding:0!important}
 @media(max-width:1200px){body.civi-tasks-mode .layout{grid-template-columns:205px minmax(0,1fr)!important}}
 @media(max-width:850px){body.civi-tasks-mode .layout{display:block!important}body.civi-tasks-mode .layout>aside{min-height:0!important}body.civi-tasks-mode .layout>aside #nav{display:flex!important;flex-wrap:wrap;gap:3px}#civi-dispatch-nav{width:100%;flex-basis:100%;padding-left:0;display:none}body.civi-tasks-mode #civi-dispatch-nav{display:flex;flex-wrap:wrap;gap:4px}#civi-dispatch-nav .civi-subnav-label{width:100%}#civi-dispatch-nav .civi-subnav-button{width:auto;padding:9px}body.civi-tasks-mode main{padding:12px!important}}
+
+/* V5.2 overrides */
+body.site-authenticated #profileShortcut, #profileShortcut{position:static!important;inset:auto!important;right:auto!important;top:auto!important;z-index:auto!important;box-shadow:none!important;flex-shrink:0}
+.topbar .toolbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+#civi-dispatch-nav .civi-subnav-label{display:none!important}
+#dispatch #d_workspace>.d-profile,#dispatch #d_workspace>.d-heading,#dispatch .d-menu-title{display:none!important}
+#dispatch .d-view[data-view="tasks"]>.d-heading{display:none!important}
+#civi-task-counts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:5px;padding:5px 7px 10px}
+#civi-task-counts span{background:#ffffff16;color:#e7f5ff;border:1px solid #ffffff1d;border-radius:7px;padding:6px 5px;font-size:10px;white-space:nowrap;text-align:center}
+#civi-task-counts b{font-size:13px;color:#fff;margin-right:3px}
+#civi-task-summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin:0 0 15px}
+.civi-summary-item{border:1px solid #d9e5f0;background:white;border-radius:12px;padding:14px 16px;display:flex;flex-direction:column;gap:5px}
+.civi-summary-item strong{font-size:25px;color:#0c5687}.civi-summary-item span{font-size:12px;color:#647d91}
+.civi-task-create{margin-bottom:15px}
+@media(max-width:850px){#civi-task-summary{grid-template-columns:repeat(2,minmax(0,1fr));gap:7px}.civi-summary-item{padding:10px}}
