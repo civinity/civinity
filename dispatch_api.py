@@ -42,6 +42,12 @@ class Rate(Base):
 class Task(Base):
  __tablename__='d_tasks'
  id=Column(Integer,primary_key=True); object_id=Column(Integer,ForeignKey('d_objects.id')); worker_id=Column(Integer,ForeignKey('d_users.id')); department=Column(String(100)); description=Column(Text); completed=Column(Text,default=''); status=Column(String(50),default='jauns'); payment=Column(String(30),default='included'); priority=Column(String(30),default='normal'); created_by=Column(Integer,ForeignKey('d_users.id')); approved_by=Column(Integer,ForeignKey('d_users.id')); approved_at=Column(DateTime(timezone=True)); completed_at=Column(DateTime(timezone=True)); created=Column(DateTime(timezone=True),default=NOW); rate_snapshot=Column(Numeric(12,2),default=0); material_total=Column(Numeric(12,2),default=0); manual_minutes=Column(Integer); correction_reason=Column(Text); pn_id=Column(Integer,ForeignKey('d_pn.id'))
+class TaskAssignment(Base):
+ __tablename__="d_task_assignments"
+ id=Column(Integer,primary_key=True); task_id=Column(Integer,ForeignKey("d_tasks.id"),index=True); user_id=Column(Integer,ForeignKey("d_users.id"),index=True)
+class TaskNotification(Base):
+ __tablename__="d_task_notifications"
+ id=Column(Integer,primary_key=True); user_id=Column(Integer,ForeignKey("d_users.id"),index=True); task_id=Column(Integer,ForeignKey("d_tasks.id")); seen=Column(Boolean,default=False); created=Column(DateTime(timezone=True),default=NOW)
 class Event(Base):
  __tablename__='d_events'
  id=Column(Integer,primary_key=True); task_id=Column(Integer,ForeignKey('d_tasks.id')); user_id=Column(Integer,ForeignKey('d_users.id')); action=Column(String(40)); at=Column(DateTime(timezone=True),default=NOW); lat=Column(Numeric(12,8)); lon=Column(Numeric(12,8)); accuracy=Column(Numeric(10,2)); distance=Column(Numeric(10,2)); gps_status=Column(String(40)); note=Column(Text)
@@ -103,7 +109,7 @@ def obj_dict(o):return dict(id=o.id,name=o.name,address=o.address,code=o.code,ow
 def object_access(o):return allowed('vaditajs') or (g.user.role=='parvaldnieks' and o.manager_id==g.user.id)
 def task_access(t):
  o=g.db.get(Object,t.object_id)
- return object_access(o) or t.worker_id==g.user.id
+ return object_access(o) or t.worker_id==g.user.id or g.db.query(TaskAssignment).filter_by(task_id=t.id,user_id=g.user.id).first() is not None
 
 def minutes(t):
  if t.manual_minutes is not None:return t.manual_minutes
@@ -118,7 +124,7 @@ def minutes(t):
 def task_dict(t):
  o=g.db.get(Object,t.object_id); u=g.db.get(User,t.worker_id) if t.worker_id else None
  mats=g.db.query(Material).filter_by(task_id=t.id).all(); mins=minutes(t); labor=D(Decimal(mins)*D(t.rate_snapshot)/Decimal(60)); mt=sum((D(m.qty)*D(m.price) for m in mats),Decimal(0)); total=D(labor+mt)
- return dict(id=t.id,number=f'UZ-{t.id:06d}',object_id=t.object_id,object=o.address if o else '',object_code=o.code if o else '',worker_id=t.worker_id,worker=u.name if u else '',department=t.department,description=t.description,completed=t.completed,status=t.status,payment=t.payment,priority=t.priority,created=t.created.isoformat(),completed_at=t.completed_at.isoformat() if t.completed_at else None,minutes=mins,hours=round(mins/60,2),rate=float(t.rate_snapshot or 0),labor=float(labor),materials=float(mt),total=float(total),pn_id=t.pn_id,materials_list=[dict(id=m.id,name=m.name,unit=m.unit,qty=float(m.qty),price=float(m.price)) for m in mats])
+ return dict(assignee_ids=[a.user_id for a in g.db.query(TaskAssignment).filter_by(task_id=t.id).all()] or ([t.worker_id] if t.worker_id else []),id=t.id,number=f'UZ-{t.id:06d}',object_id=t.object_id,object=o.address if o else '',object_code=o.code if o else '',worker_id=t.worker_id,worker=u.name if u else '',department=t.department,description=t.description,completed=t.completed,status=t.status,payment=t.payment,priority=t.priority,created=t.created.isoformat(),completed_at=t.completed_at.isoformat() if t.completed_at else None,minutes=mins,hours=round(mins/60,2),rate=float(t.rate_snapshot or 0),labor=float(labor),materials=float(mt),total=float(total),pn_id=t.pn_id,materials_list=[dict(id=m.id,name=m.name,unit=m.unit,qty=float(m.qty),price=float(m.price)) for m in mats])
 
 @bp.post('/register')
 def register():
@@ -287,7 +293,10 @@ def object_file_delete(oid,fid):
 @auth
 def tasks():
  q=g.db.query(Task)
- if g.user.role in ('meistars','arpakalpojums'):q=q.filter_by(worker_id=g.user.id)
+ if g.user.role in ('meistars','arpakalpojums'):
+  from sqlalchemy import or_
+  assigned=g.db.query(TaskAssignment.task_id).filter_by(user_id=g.user.id)
+  q=q.filter(or_(Task.worker_id==g.user.id,Task.id.in_(assigned)))
  elif g.user.role=='parvaldnieks':q=q.filter(Task.object_id.in_([o.id for o in g.db.query(Object).filter_by(manager_id=g.user.id)]))
  return jsonify([task_dict(t) for t in q.order_by(Task.id.desc()).limit(500).all()])
 @bp.post('/tasks')
@@ -296,14 +305,23 @@ def task_create():
  if e:=guard('vaditajs','parvaldnieks'):return e
  p=request.get_json(silent=True) or {};o=g.db.get(Object,p.get('object_id'))
  if not o or not object_access(o):return error('Objekts nav pieejams',403)
- u=g.db.get(User,p.get('worker_id')) if p.get('worker_id') else None
- if not u or not u.approved or u.role not in ('meistars','arpakalpojums','vaditajs'):return error('Izvēlieties apstiprinātu izpildītāju')
+ ids=p.get('worker_ids') or ([p.get('worker_id')] if p.get('worker_id') else [])
+ try:ids=list(dict.fromkeys(int(x) for x in ids))
+ except (ValueError,TypeError):return error('Nekorekti meistaru ID')
+ if not ids or len(ids)>20:return error('Izvēlieties 1–20 meistarus')
+ assignees=g.db.query(User).filter(User.id.in_(ids),User.approved.is_(True),User.active.is_(True),User.role=='meistars').all()
+ if len(assignees)!=len(ids):return error('Izvēlieties tikai apstiprinātus meistarus')
+ u=assignees[0]
  department=str(p.get('department',''));rate=o.rate
  rate_row=g.db.query(Rate).filter_by(object_id=o.id,department=department).order_by(Rate.effective_from.desc()).first()
  if rate_row:rate=rate_row.rate
  if p.get('payment') not in ('included','extra'):return error('Nepieciešams darba apmaksas veids')
  t=Task(object_id=o.id,worker_id=u.id,department=department,description=str(p.get('description','')),payment=p['payment'],priority=p.get('priority','normal'),created_by=g.user.id,status='nodots',rate_snapshot=rate)
- g.db.add(t);g.db.flush();audit('task_created',t.id);g.db.commit();return jsonify(task_dict(t)),201
+ g.db.add(t);g.db.flush()
+ for uid in ids:
+  g.db.add(TaskAssignment(task_id=t.id,user_id=uid))
+  g.db.add(TaskNotification(task_id=t.id,user_id=uid))
+ audit('task_created',t.id);g.db.commit();return jsonify(task_dict(t)),201
 @bp.patch('/tasks/<int:tid>')
 @auth
 def task_edit(tid):
@@ -361,7 +379,7 @@ def events(tid):
 @auth
 def photo_upload(tid):
  t=g.db.get(Task,tid)
- if not t or t.worker_id!=g.user.id or t.status in ('apstiprinats','gaida_apstiprinajumu') or t.pn_id:return error('Nav piekļuves',403)
+ if not t or not task_access(t) or t.status in ('apstiprinats','gaida_apstiprinajumu') or t.pn_id:return error('Nav piekļuves',403)
  f=request.files.get('photo')
  if not f:return error('Nav faila')
  data=f.read(4*1024*1024+1)
@@ -407,6 +425,46 @@ def ai_report():
   r=OpenAI().chat.completions.create(model=os.getenv('DISPATCH_AI_MODEL','gpt-4o-mini'),messages=[{'role':'system','content':'Pārraksti meistara faktisko darbu atskaiti profesionālā latviešu valodā. Nekad neizdomā neizdarītus darbus, pārbaudes, materiālus, rezultātus vai laikus. Atbildi tikai ar gatavu aprakstu.'},{'role':'user','content':raw}],temperature=0.1)
   return jsonify(text=r.choices[0].message.content)
  except Exception:return error('AI pakalpojums šobrīd nav pieejams',502)
+@bp.get('/notifications')
+@auth
+def task_notifications():
+ rows=g.db.query(TaskNotification).filter_by(user_id=g.user.id).order_by(TaskNotification.id.desc()).limit(100).all()
+ return jsonify([dict(id=n.id,task_id=n.task_id,seen=n.seen,created=n.created.isoformat()) for n in rows])
+
+@bp.post('/notifications/<int:nid>/read')
+@auth
+def task_notification_read(nid):
+ n=g.db.query(TaskNotification).filter_by(id=nid,user_id=g.user.id).first()
+ if not n:return error('Nav piekļuves',404)
+ n.seen=True;g.db.commit();return jsonify(ok=True)
+
+@bp.post('/ai-task')
+@auth
+def ai_task():
+ p=request.get_json(silent=True) or {};raw=str(p.get('text',''))[:8000]
+ if not raw.strip():return error('Nav teksta')
+ if not os.getenv('OPENAI_API_KEY'):return error('AI nav konfigurēts (OPENAI_API_KEY)',503)
+ from openai import OpenAI
+ try:
+  r=OpenAI().chat.completions.create(model=os.getenv('DISPATCH_AI_MODEL','gpt-4o-mini'),messages=[{'role':'system','content':'Pārveido diktētu darba uzdevumu īsā, precīzā un profesionālā latviešu valodas darba aprakstā. Saglabā visus faktus, adreses, izmērus, apjomus, skaitļus un tehniskās prasības. Neizdomā neko, kas nav teikts. Atgriez tikai gatavo tekstu.'},{'role':'user','content':raw}],temperature=0.1)
+  return jsonify(text=r.choices[0].message.content)
+ except Exception:return error('AI apstrāde neizdevās',502)
+
+@bp.post('/transcribe-task')
+@auth
+def transcribe_task():
+ if not os.getenv('OPENAI_API_KEY'):return error('AI nav konfigurēts (OPENAI_API_KEY)',503)
+ f=request.files.get('audio')
+ if not f:return error('Nav audio faila')
+ data=f.read(12*1024*1024+1)
+ if len(data)>12*1024*1024:return error('Audio pārsniedz 12 MB')
+ from openai import OpenAI
+ try:
+  buf=io.BytesIO(data);buf.name='uzdevums.webm' if 'webm' in (f.mimetype or '') else 'uzdevums.mp4'
+  transcript=OpenAI().audio.transcriptions.create(model='whisper-1',file=buf,language='lv')
+  return jsonify(text=transcript.text)
+ except Exception:return error('Audio atpazīšana neizdevās',502)
+
 @bp.get('/monthly')
 @auth
 def monthly():
