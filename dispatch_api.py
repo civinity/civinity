@@ -570,3 +570,45 @@ def invoice_pdf(pid):
  doc.build(elements);out.seek(0)
  audit('invoice_draft_pdf',pid,'PN rēķina projekts');g.db.commit()
  return send_file(out,mimetype='application/pdf',as_attachment=True,download_name=f'REKINS_PROJEKTS_PN_{pid}.pdf')
+
+
+@bp.get('/pn/<int:pid>/xlsx')
+@auth
+def pn_xlsx(pid):
+    """Excel export for an existing PN act; same object-access policy as PN PDF."""
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment
+    p = g.db.get(PN, pid)
+    if not p or not object_access(g.db.get(Object, p.object_id)):
+        return error('Nav piekļuves', 403)
+    o = g.db.get(Object, p.object_id)
+    ts = g.db.query(Task).filter_by(pn_id=pid).order_by(Task.id).all()
+    wb = Workbook(); ws = wb.active; ws.title = 'PN akts'
+    ws.append(['PIEŅEMŠANAS–NODOŠANAS AKTS', f'PN-{p.year}-{p.month:02d}-{p.id:04d}'])
+    ws.append(['Objekts', o.address]); ws.append(['Pasūtītājs', o.customer or ''])
+    ws.append(['Līgums', o.contract or '']); ws.append(['Periods', f'{p.month:02d}.{p.year}'])
+    ws.append([])
+    headers=['Nr.','Uzdevums','Paveiktie darbi','Stundas','EUR/h','Darbi EUR','Materiāli EUR','Kopā EUR']
+    ws.append(headers)
+    total=0
+    for i,t in enumerate(ts,1):
+        d=task_dict(t);total+=float(d['total'])
+        ws.append([i,d['number'],t.completed or t.description,float(d['hours']),float(d['rate']),float(d['labor']),float(d['materials']),float(d['total'])])
+    ws.append(['','','Kopā bez PVN','','','','',round(total,2)])
+    ws.append(['','','PVN','','','','',round(total*float(o.vat or 0)/100,2)])
+    ws.append(['','','KOPĀ AR PVN','','','','',round(total*(1+float(o.vat or 0)/100),2)])
+    for cell in ws[7]:cell.font=Font(bold=True,color='FFFFFF');cell.fill=PatternFill('solid',fgColor='173B60')
+    for col,width in {'A':9,'B':22,'C':65,'D':13,'E':13,'F':16,'G':18,'H':18}.items():ws.column_dimensions[col].width=width
+    ws.freeze_panes='A8';ws.auto_filter.ref=f'A7:H{7+len(ts)}'
+    for row in ws.iter_rows(min_row=8):
+        for cell in row:cell.alignment=Alignment(vertical='top',wrap_text=True)
+    out=io.BytesIO();wb.save(out);out.seek(0)
+    return send_file(out,mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',as_attachment=True,download_name=f'PN-{p.year}-{p.month:02d}-{p.id:04d}.xlsx')
+
+@bp.get('/pn/<int:pid>/preview')
+@auth
+def pn_preview(pid):
+    p=g.db.get(PN,pid)
+    if not p or not object_access(g.db.get(Object,p.object_id)):return error('Nav piekļuves',403)
+    o=g.db.get(Object,p.object_id);ts=g.db.query(Task).filter_by(pn_id=pid).order_by(Task.id).all()
+    return jsonify(number=f'PN-{p.year}-{p.month:02d}-{p.id:04d}',object=o.address,customer=o.customer or '',rows=[dict(number=task_dict(t)['number'],description=t.completed or t.description,hours=task_dict(t)['hours'],labor=task_dict(t)['labor'],materials=task_dict(t)['materials'],total=task_dict(t)['total']) for t in ts],vat=float(o.vat or 0))
