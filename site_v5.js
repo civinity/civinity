@@ -51,14 +51,14 @@ if(subnav){
  if(!nav||!staff)return;
  staff.remove();
  const admin=document.createElement('button');
- admin.type='button';admin.id='civi-admin-users';admin.className='nav-item';
+ admin.type='button';admin.id='civi-admin-users';admin.className='nav';
  admin.textContent='⚙ Administrēšana';
  admin.title='Lietotāju apstiprināšana un tiesību piešķiršana';
  admin.addEventListener('click',()=>{
    window.page('dispatch');
    staff.click();
  });
- nav.append(admin);
+ nav.querySelector('[data-page="settings"]')?.before(admin);
  // The existing dispatcher refreshVisibility() sets the staff button display
  // according to the authenticated role. Mirror that state for the main menu.
  const update=()=>{
@@ -71,7 +71,7 @@ if(subnav){
 })();
 // Remove the duplicate dispatcher profile/logout row; global profile remains top right.
 const who=$('d_who');
-if(who){const row=who.parentElement;if(row)row.style.display='none';}
+if(who){const row=who.parentElement;if(row){row.classList.add('civi-hidden-legacy-account');row.style.setProperty('display','none','important');}}
 // No separate task header or horizontal tabs; global sidebar is always visible.
 // Move profile icon only visually using CSS; it keeps its original click handler.
 // Show task list first, not the dashboard, even on subsequent visits.
@@ -100,9 +100,9 @@ const taskView=document.querySelector('#dispatch .d-view[data-view="tasks"]');
 const taskStats=document.createElement('div');taskStats.id='civi-task-summary';
 taskStats.innerHTML='<div class="civi-summary-item"><strong id="civi-top-new">—</strong><span>Jauni uzdevumi</span></div><div class="civi-summary-item"><strong id="civi-top-done">—</strong><span>Pabeigti</span></div><div class="civi-summary-item"><strong id="civi-top-open">—</strong><span>Neizpildīti</span></div><div class="civi-summary-item"><strong id="civi-top-progress">—</strong><span>Procesā</span></div>';
 if(taskView){const heading=taskView.querySelector('.d-heading');if(heading)heading.remove();taskView.prepend(taskStats);
-const add=document.createElement('button');add.className='btn civi-task-create';add.textContent='＋ Jauns uzdevums';add.type='button';add.onclick=()=>{const button=document.querySelector('#civi-dispatch-nav [data-view="new"]');if(button && getComputedStyle(button).display!=='none'){button.click();}else{const msg=document.getElementById('d_message');if(msg)msg.textContent='Jauna uzdevuma izveidei nepieciešamas vadītāja vai pārvaldnieka tiesības.';}};taskStats.insertAdjacentElement('afterend',add);}
+const add=document.createElement('button');add.className='btn civi-task-create';add.textContent='＋ Jauns uzdevums';add.type='button';add.onclick=()=>{const role=(document.getElementById('d_who')?.textContent||'').toLowerCase();if(!['administrators','vaditajs','parvaldnieks'].some(r=>role.includes(r))){const msg=document.getElementById('d_message');if(msg)msg.textContent='Jauna uzdevuma izveidei nepieciešamas vadītāja vai pārvaldnieka tiesības.';return;}window.page('dispatch');if(typeof window.civiDispatchShow==='function')window.civiDispatchShow('new');else document.querySelector('#civi-dispatch-nav [data-view="new"]')?.click();};taskStats.insertAdjacentElement('afterend',add);}
 // Remove duplicate title/exit row left behind by the old dispatcher markup.
-const who=$('d_who');if(who?.parentElement)who.parentElement.style.display='none'; // retain d_who for permission checks
+const who=$('d_who');if(who?.parentElement){who.parentElement.classList.add('civi-hidden-legacy-account');who.parentElement.style.setProperty('display','none','important');} // retain d_who for permission checks
 const names=['new','done','open','progress'];
 function update(){const rows=[...document.querySelectorAll('#d_taskrows tr')].filter(r=>r.querySelector('button'));if(!rows.length){return;}
  const counts={new:0,done:0,open:0,progress:0};
@@ -123,9 +123,9 @@ const rows=$('d_taskrows');if(rows)new MutationObserver(update).observe(rows,{ch
 (()=>{'use strict';
 const API='https://civinity-ai-api.onrender.com/api/dispatch';
 const nav=document.getElementById('nav');if(!nav)return;
-const button=document.createElement('button');button.type='button';button.className='nav-item';button.id='civi-invoice-link';button.textContent='€ Rēķinu ģenerators';button.style.display='none';
+const button=document.createElement('button');button.type='button';button.className='nav';button.id='civi-invoice-link';button.textContent='€ Rēķinu ģenerators';button.style.display='none';
 const panel=document.createElement('section');panel.id='civi-invoice-panel';panel.className='hidden';panel.innerHTML='<div class="civi-invoice-card"><h2>Rēķinu ģenerators</h2><p>Izvēlieties pieņemšanas–nodošanas aktu, lai sagatavotu rēķina projektu PDF formātā.</p><label for="civi-invoice-pn">PN akts</label><select id="civi-invoice-pn"><option>Notiek ielāde…</option></select><div class="civi-invoice-actions"><button type="button" id="civi-invoice-create">Sagatavot rēķinu (PDF)</button><button type="button" id="civi-invoice-back">Atpakaļ</button></div><p id="civi-invoice-message" role="status"></p></div>';
-const main=document.querySelector('main');main?.append(panel);nav.append(button);
+const main=document.querySelector('main');main?.append(panel);nav.querySelector('[data-page="settings"]')?.before(button);
 const status=panel.querySelector('#civi-invoice-message'),select=panel.querySelector('#civi-invoice-pn');
 async function req(path){const token=sessionStorage.getItem('dispatch_token');if(!token)throw Error('Nepieciešama autorizācija');const r=await fetch(API+path,{headers:{Authorization:'Bearer '+token}});if(!r.ok){const j=await r.json().catch(()=>({}));throw Error(j.error||'HTTP '+r.status)}return r;}
 async function show(){

@@ -103,3 +103,7 @@ body.site-authenticated #profileShortcut, #profileShortcut{position:static!impor
 #civi-dispatch-nav .civi-subnav-button{min-height:37px}
 
 #civi-invoice-panel{padding:26px;max-width:1000px;width:100%;box-sizing:border-box}#civi-invoice-panel.hidden{display:none!important}.civi-invoice-card{background:white;border-radius:16px;padding:28px;box-shadow:0 8px 30px #173b6014}.civi-invoice-card select{display:block;width:100%;max-width:650px;padding:12px;margin:12px 0 20px;border:1px solid #cbd5e1;border-radius:8px}.civi-invoice-actions{display:flex;gap:12px;flex-wrap:wrap}.civi-invoice-actions button{border:0;border-radius:8px;background:#173b60;color:white;padding:12px 18px;cursor:pointer}.civi-invoice-actions button+button{background:#e8eef5;color:#173b60}
+
+/* V5.8: suppress legacy dispatcher user/exit bar even when relocated by design.js */
+#dispatch .civi-hidden-legacy-account{display:none!important}
+#civi-admin-users,#civi-invoice-link{width:100%;text-align:left;cursor:pointer}
