@@ -8,6 +8,19 @@ const gate=document.createElement('div');gate.id='u_gate';gate.innerHTML='<div c
 document.body.append(gate);
 const auth=$('d_auth'),msg=$('d_message');$('u_auth_host').append(auth,msg);
 const regSwitch=$('u_register_switch'),forgotSwitch=$('u_forgot_switch'),forgotNote=$('u_forgot_note');let registering=false;const nameField=$('d_name').closest('label');const registerAction=auth.querySelector('button[onclick="dispatchRegister()"]');const loginAction=auth.querySelector('button[onclick="dispatchLogin()"]');function loginMode(on){registering=on;nameField.style.display=on?'block':'none';registerAction.style.display=on?'block':'none';loginAction.style.display=on?'none':'block';regSwitch.textContent=on?'Atpakaļ uz pieslēgšanos':'Reģistrēties';forgotNote.hidden=true;msg.textContent='';}loginMode(false);regSwitch.onclick=()=>loginMode(!registering);forgotSwitch.onclick=()=>{forgotNote.hidden=!forgotNote.hidden};
+// Enter submits ONLY the login form. Registration is button-only.
+const emailInput=$('d_email'),passwordInput=$('d_password'),nameInput=$('d_name');
+emailInput.placeholder='E-pasta adrese';passwordInput.placeholder='Parole';nameInput.placeholder='Vārds un uzvārds';
+emailInput.setAttribute('enterkeyhint','next');passwordInput.setAttribute('enterkeyhint','go');
+passwordInput.autocomplete='current-password';
+[emailInput,passwordInput].forEach(field=>field.addEventListener('keydown',event=>{
+ if(event.key!=='Enter'||event.isComposing||event.repeat||registering)return;
+ event.preventDefault();
+ if(!emailInput.value.trim()){emailInput.focus();return;}
+ if(!passwordInput.value){passwordInput.focus();return;}
+ if(!loginAction.disabled)loginAction.click();
+}));
+
 
 async function request(path,method='GET',data){const r=await fetch(BASE+path,{method,headers:{Authorization:'Bearer '+token(),...(data?{'Content-Type':'application/json'}:{})},body:data?JSON.stringify(data):undefined});let j;try{j=await r.json()}catch{j={}}if(!r.ok)throw Error(j.error||`HTTP ${r.status}`);return j;}
 function setGate(allowed){

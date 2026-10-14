@@ -107,3 +107,15 @@ body.site-authenticated #profileShortcut, #profileShortcut{position:static!impor
 /* V5.8: suppress legacy dispatcher user/exit bar even when relocated by design.js */
 #dispatch .civi-hidden-legacy-account{display:none!important}
 #civi-admin-users,#civi-invoice-link{width:100%;text-align:left;cursor:pointer}
+
+/* V6.4 — clean, proportional sign-in fields; no decorative icons. */
+#u_gate .u-login-card{width:min(100%,430px)!important;padding:38px 36px 30px!important;box-sizing:border-box}
+#u_gate #d_auth>.grid2{gap:15px!important}
+#u_gate #d_auth .grid2 label{position:relative!important;display:block!important;width:100%!important;font-size:0!important;line-height:1!important}
+#u_gate #d_auth .grid2 label::before,#u_gate #d_auth .grid2 label::after{content:none!important;display:none!important}
+#u_gate #d_auth .grid2 label input{display:block!important;width:100%!important;height:60px!important;min-height:60px!important;box-sizing:border-box!important;padding:0 19px!important;border:1px solid #cbdce9!important;border-radius:15px!important;background:#f9fcff!important;font-family:Inter,system-ui,-apple-system,'Segoe UI',Arial,sans-serif!important;font-size:17px!important;font-weight:400!important;letter-spacing:.01em!important;color:#14344e!important;box-shadow:0 2px 6px #0d3c6010!important}
+#u_gate #d_auth .grid2 label input::placeholder{font-size:16px!important;font-weight:400!important;color:#8497a9!important;opacity:1}
+#u_gate #d_auth .grid2 label input:focus{outline:none!important;border-color:#258fc9!important;box-shadow:0 0 0 4px #2396cf22!important;background:white!important}
+#u_gate #d_auth button.btn{min-height:54px!important;border-radius:14px!important;font-size:16px!important;font-weight:600!important;letter-spacing:.01em!important}
+#u_gate .u-auth-actions button{font-size:13px!important;font-weight:500!important}
+@media(max-width:480px){#u_gate .u-login-card{padding:30px 21px 24px!important}#u_gate #d_auth .grid2 label input{height:58px!important;min-height:58px!important;font-size:16px!important}}

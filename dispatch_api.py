@@ -22,7 +22,7 @@ Base=declarative_base()
 Session=sessionmaker(bind=engine,expire_on_commit=False) if engine else None
 NOW=lambda:datetime.now(timezone.utc)
 D=lambda x:Decimal(str(x or 0)).quantize(Decimal('.01'),rounding=ROUND_HALF_UP)
-ROLES={'administrators','vaditajs','parvaldnieks','meistars','arpakalpojums'}
+ROLES={'administrators','vaditajs','parvaldnieks','meistars','arpakalpojums','klients'}
 
 class User(Base):
  __tablename__='d_users'
@@ -48,6 +48,18 @@ class TaskAssignment(Base):
 class TaskNotification(Base):
  __tablename__="d_task_notifications"
  id=Column(Integer,primary_key=True); user_id=Column(Integer,ForeignKey("d_users.id"),index=True); task_id=Column(Integer,ForeignKey("d_tasks.id")); seen=Column(Boolean,default=False); created=Column(DateTime(timezone=True),default=NOW)
+class Equipment(Base):
+ __tablename__='d_equipment'
+ id=Column(Integer,primary_key=True); object_id=Column(Integer,ForeignKey('d_objects.id'),nullable=False,index=True); title=Column(String(200),nullable=False); model=Column(String(180),default=''); serial=Column(String(150),default=''); location=Column(String(200),default=''); notes=Column(Text,default=''); created=Column(DateTime(timezone=True),default=NOW)
+class RepairPlan(Base):
+ __tablename__='d_repair_plans'
+ id=Column(Integer,primary_key=True); object_id=Column(Integer,ForeignKey('d_objects.id'),nullable=False,index=True); title=Column(String(240),nullable=False); estimated=Column(Numeric(12,2),default=0); priority=Column(String(24),default='videja'); state=Column(String(24),default='planots'); target_year=Column(Integer); created=Column(DateTime(timezone=True),default=NOW)
+class ClientAccess(Base):
+ __tablename__='d_client_access'
+ id=Column(Integer,primary_key=True); user_id=Column(Integer,ForeignKey('d_users.id'),nullable=False,index=True); object_id=Column(Integer,ForeignKey('d_objects.id'),nullable=False,index=True)
+class GeneratedDocument(Base):
+ __tablename__='d_generated_documents'
+ id=Column(Integer,primary_key=True); object_id=Column(Integer,ForeignKey('d_objects.id'),nullable=False,index=True); task_id=Column(Integer,ForeignKey('d_tasks.id')); kind=Column(String(40)); title=Column(String(240)); body=Column(Text); created_by=Column(Integer,ForeignKey('d_users.id')); created=Column(DateTime(timezone=True),default=NOW)
 class Event(Base):
  __tablename__='d_events'
  id=Column(Integer,primary_key=True); task_id=Column(Integer,ForeignKey('d_tasks.id')); user_id=Column(Integer,ForeignKey('d_users.id')); action=Column(String(40)); at=Column(DateTime(timezone=True),default=NOW); lat=Column(Numeric(12,8)); lon=Column(Numeric(12,8)); accuracy=Column(Numeric(10,2)); distance=Column(Numeric(10,2)); gps_status=Column(String(40)); note=Column(Text)
@@ -56,7 +68,7 @@ class Material(Base):
  id=Column(Integer,primary_key=True); task_id=Column(Integer,ForeignKey('d_tasks.id')); name=Column(String(200)); unit=Column(String(30)); qty=Column(Numeric(12,3)); price=Column(Numeric(12,2))
 class Photo(Base):
  __tablename__='d_photos'
- id=Column(Integer,primary_key=True); task_id=Column(Integer,ForeignKey('d_tasks.id')); mime=Column(String(30)); data=Column(LargeBinary); created=Column(DateTime(timezone=True),default=NOW)
+ id=Column(Integer,primary_key=True); task_id=Column(Integer,ForeignKey('d_tasks.id')); mime=Column(String(30)); data=Column(LargeBinary); phase=Column(String(20),default='general'); created=Column(DateTime(timezone=True),default=NOW)
 class PN(Base):
  __tablename__='d_pn'
  id=Column(Integer,primary_key=True); object_id=Column(Integer,ForeignKey('d_objects.id')); year=Column(Integer); month=Column(Integer); status=Column(String(40),default='melnraksts'); created_by=Column(Integer,ForeignKey('d_users.id')); created=Column(DateTime(timezone=True),default=NOW); company_json=Column(Text,default='{}')
@@ -76,6 +88,9 @@ if engine:
   obj_columns={c['name'] for c in inspect(connection).get_columns('d_objects')}
   if 'cadastral_number' not in obj_columns:
    connection.execute(sql_text("ALTER TABLE d_objects ADD COLUMN cadastral_number VARCHAR(90) DEFAULT ''"))
+  photo_columns={c['name'] for c in inspect(connection).get_columns('d_photos')}
+  if 'phase' not in photo_columns:
+   connection.execute(sql_text("ALTER TABLE d_photos ADD COLUMN phase VARCHAR(20) DEFAULT 'general'"))
  # Bootstrap administrator only with explicit environment credentials.
  if os.getenv('DISPATCH_ADMIN_EMAIL') and os.getenv('DISPATCH_ADMIN_PASSWORD'):
   with Session.begin() as s:
@@ -108,6 +123,7 @@ def json_user(u):return dict(id=u.id,name=u.name,email=u.email,role=u.role,appro
 def obj_dict(o):return dict(id=o.id,name=o.name,address=o.address,code=o.code,ownership=o.ownership,company=o.company,customer=o.customer,contract=o.contract,rate=float(o.rate or 0),vat=float(o.vat or 21),latitude=float(o.latitude) if o.latitude is not None else None,longitude=float(o.longitude) if o.longitude is not None else None,radius=o.radius,manager_id=o.manager_id,cadastral_number=o.cadastral_number or '')
 def object_access(o):return allowed('vaditajs') or (g.user.role=='parvaldnieks' and o.manager_id==g.user.id)
 def task_access(t):
+ if g.user.role=='klients':return bool(g.db.query(ClientAccess).filter_by(user_id=g.user.id,object_id=t.object_id).first() and t.status=='apstiprinats')
  o=g.db.get(Object,t.object_id)
  return object_access(o) or t.worker_id==g.user.id or g.db.query(TaskAssignment).filter_by(task_id=t.id,user_id=g.user.id).first() is not None
 
@@ -207,6 +223,7 @@ def user_update(uid):
 def objects():
  q=g.db.query(Object)
  if g.user.role=='parvaldnieks':q=q.filter_by(manager_id=g.user.id)
+ if g.user.role=='klients':q=q.filter(Object.id.in_(g.db.query(ClientAccess.object_id).filter_by(user_id=g.user.id)))
  if g.user.role in ('meistars','arpakalpojums'):
   ids=[x[0] for x in g.db.query(Task.object_id).filter_by(worker_id=g.user.id).distinct().all()];q=q.filter(Object.id.in_(ids))
  return jsonify([obj_dict(o) for o in q.order_by(Object.address).all()])
@@ -292,6 +309,7 @@ def object_file_delete(oid,fid):
 @bp.get('/tasks')
 @auth
 def tasks():
+ if g.user.role=='klients':return jsonify([task_dict(t) for t in g.db.query(Task).filter(Task.object_id.in_(g.db.query(ClientAccess.object_id).filter_by(user_id=g.user.id)),Task.status=='apstiprinats').order_by(Task.id.desc()).limit(300).all()])
  q=g.db.query(Task)
  if g.user.role in ('meistars','arpakalpojums'):
   from sqlalchemy import or_
@@ -389,13 +407,13 @@ def photo_upload(tid):
   im=Image.open(io.BytesIO(data));im.verify()
   if im.format not in ('JPEG','PNG','WEBP'):raise ValueError()
  except Exception:return error('Atļauti tikai JPEG, PNG, WEBP attēli')
- g.db.add(Photo(task_id=tid,mime='image/'+im.format.lower(),data=data));audit('photo_uploaded',tid);g.db.commit();return jsonify(ok=True)
+ g.db.add(Photo(task_id=tid,mime='image/'+im.format.lower(),data=data,phase=request.form.get('phase','general') if request.form.get('phase') in ('before','after') else 'general'));audit('photo_uploaded',tid);g.db.commit();return jsonify(ok=True)
 @bp.get('/tasks/<int:tid>/photos')
 @auth
 def photo_list(tid):
  t=g.db.get(Task,tid)
  if not t or not task_access(t):return error('Nav piekļuves',403)
- return jsonify([dict(id=p.id,mime=p.mime) for p in g.db.query(Photo).filter_by(task_id=tid).all()])
+ return jsonify([dict(id=p.id,mime=p.mime,phase=p.phase or 'general') for p in g.db.query(Photo).filter_by(task_id=tid).all()])
 @bp.get('/photos/<int:pid>')
 @auth
 def photo_get(pid):
@@ -612,3 +630,193 @@ def pn_preview(pid):
     if not p or not object_access(g.db.get(Object,p.object_id)):return error('Nav piekļuves',403)
     o=g.db.get(Object,p.object_id);ts=g.db.query(Task).filter_by(pn_id=pid).order_by(Task.id).all()
     return jsonify(number=f'PN-{p.year}-{p.month:02d}-{p.id:04d}',object=o.address,customer=o.customer or '',rows=[dict(number=task_dict(t)['number'],description=t.completed or t.description,hours=task_dict(t)['hours'],labor=task_dict(t)['labor'],materials=task_dict(t)['materials'],total=task_dict(t)['total']) for t in ts],vat=float(o.vat or 0))
+
+# CIVINITY V6.1: equipment QR, maintenance planning, quality checklists,
+# search assistant, document drafts, and restricted customer portal.
+def _object_read(oid):
+ o=g.db.get(Object,oid)
+ if not o:return None
+ if g.user.role=='klients':return o if g.db.query(ClientAccess).filter_by(user_id=g.user.id,object_id=oid).first() else None
+ if g.user.role in ('administrators','vaditajs','parvaldnieks','meistars','arpakalpojums'):return o
+ return None
+
+def _edit_object(oid):
+ o=g.db.get(Object,oid)
+ return o if o and object_access(o) else None
+
+@bp.get('/v61/equipment')
+@auth
+def v61_equipment():
+ oid=request.args.get('object_id',type=int)
+ if not oid or not _object_read(oid):return error('Objekts nav pieejams',403)
+ rows=g.db.query(Equipment).filter_by(object_id=oid).order_by(Equipment.id.desc()).all()
+ return jsonify([dict(id=x.id,object_id=x.object_id,title=x.title,model=x.model,serial=x.serial,location=x.location,notes=x.notes) for x in rows])
+
+@bp.post('/v61/equipment')
+@auth
+def v61_equipment_create():
+ p=request.get_json(silent=True) or {};oid=p.get('object_id')
+ if not _edit_object(oid):return error('Nav tiesību',403)
+ title=str(p.get('title','')).strip()[:200]
+ if not title:return error('Norādiet iekārtas nosaukumu')
+ x=Equipment(object_id=oid,title=title,model=str(p.get('model',''))[:180],serial=str(p.get('serial',''))[:150],location=str(p.get('location',''))[:200],notes=str(p.get('notes',''))[:3000]);g.db.add(x);g.db.flush();audit('equipment_created',x.id);g.db.commit();return jsonify(id=x.id),201
+
+@bp.get('/v61/equipment/<int:eid>/history')
+@auth
+def v61_equipment_history(eid):
+ x=g.db.get(Equipment,eid)
+ if not x or not _object_read(x.object_id):return error('Nav piekļuves',403)
+ # Explicit reference [EQ-id] in task description links equipment to repair history.
+ rows=g.db.query(Task).filter(Task.object_id==x.object_id,Task.description.ilike('%[EQ-'+str(eid)+']%')).order_by(Task.id.desc()).limit(100).all()
+ if g.user.role=='klients':rows=[t for t in rows if t.status=='apstiprinats']
+ return jsonify([dict(id=t.id,number='UZ-%06d'%t.id,description=t.description,status=t.status) for t in rows])
+
+@bp.get('/v61/plans')
+@auth
+def v61_plans():
+ oid=request.args.get('object_id',type=int)
+ if not oid or not _object_read(oid):return error('Nav piekļuves',403)
+ rows=g.db.query(RepairPlan).filter_by(object_id=oid).order_by(RepairPlan.id.desc()).all()
+ return jsonify([dict(id=x.id,title=x.title,estimated=float(x.estimated or 0),priority=x.priority,state=x.state,target_year=x.target_year) for x in rows])
+
+@bp.post('/v61/plans')
+@auth
+def v61_plan_add():
+ p=request.get_json(silent=True) or {};oid=p.get('object_id')
+ if not _edit_object(oid):return error('Nav tiesību',403)
+ try:cost=D(p.get('estimated',0));year=int(p.get('target_year') or NOW().year)
+ except Exception:return error('Nepareizas izmaksas vai gads')
+ if cost<0 or cost>100000000:return error('Nederīga summa')
+ if p.get('priority') not in ('zema','videja','augsta','avarija'):return error('Nederīga prioritāte')
+ title=str(p.get('title','')).strip()[:240]
+ if not title:return error('Norādiet darba nosaukumu')
+ x=RepairPlan(object_id=oid,title=title,estimated=cost,priority=p['priority'],target_year=year);g.db.add(x);g.db.flush();audit('repair_plan_created',x.id);g.db.commit();return jsonify(id=x.id),201
+
+@bp.patch('/v61/plans/<int:pid>')
+@auth
+def v61_plan_update(pid):
+ x=g.db.get(RepairPlan,pid)
+ if not x or not _edit_object(x.object_id):return error('Nav tiesību',403)
+ p=request.get_json(silent=True) or {}
+ if p.get('state') not in ('planots','saskanots','izpildits'):return error('Nederīgs statuss')
+ x.state=p['state'];audit('repair_plan_updated',pid);g.db.commit();return jsonify(ok=True)
+
+@bp.get('/v61/quality/<int:tid>')
+@auth
+def v61_quality(tid):
+ t=g.db.get(Task,tid)
+ if not t or not task_access(t):return error('Nav piekļuves',403)
+ photos=g.db.query(Photo).filter_by(task_id=tid).count()
+ before=g.db.query(Photo).filter_by(task_id=tid,phase='before').count()
+ after=g.db.query(Photo).filter_by(task_id=tid,phase='after').count()
+ return jsonify(task_id=tid,status=t.status,description=bool((t.completed or '').strip()),photos=photos,before_photos=before,after_photos=after,materials=g.db.query(Material).filter_by(task_id=tid).count(),hours=round(minutes(t)/60,2),approved=bool(t.approved_at),checks=[dict(label='Paveikto darbu apraksts',ok=bool((t.completed or '').strip())),dict(label='Fotogrāfijas pirms darba',ok=before>0),dict(label='Fotogrāfijas pēc darba',ok=after>0),dict(label='Darba laiks',ok=minutes(t)>0),dict(label='Vadītāja apstiprinājums',ok=bool(t.approved_at))])
+
+@bp.post('/v61/assistant')
+@auth
+def v61_assistant():
+ p=request.get_json(silent=True) or {};q=str(p.get('question','')).strip()[:500]
+ if len(q)<3:return error('Ievadiet jautājumu')
+ # Grounded keyword retrieval, not an unconstrained model query.
+ words=[w for w in re.findall(r'[\wāčēģīķļņšūž]{3,}',q.lower()) if w not in ('kādi','kuras','visi','par','objekti','uzdevumi','darbi')][:7]
+ if not words:return error('Lūdzu, precizējiet meklējamo tēmu')
+ from sqlalchemy import or_
+ objects=g.db.query(Object).all()
+ if g.user.role=='klients':objects=[o for o in objects if _object_read(o.id)]
+ ids=[o.id for o in objects]
+ rows=g.db.query(Task).filter(Task.object_id.in_(ids),or_(*[Task.description.ilike('%'+w+'%') for w in words])).order_by(Task.id.desc()).limit(100).all() if ids else []
+ if g.user.role in ('meistars','arpakalpojums'):rows=[t for t in rows if task_access(t)]
+ if g.user.role=='klients':rows=[t for t in rows if t.status=='apstiprinats']
+ data=[dict(number='UZ-%06d'%t.id,object=next((o.address for o in objects if o.id==t.object_id),''),description=(t.description or '')[:500],status=t.status) for t in rows[:25]]
+ answer=('Atrasti '+str(len(rows))+' atbilstoši uzdevumi. Zemāk ir ieraksti no datubāzes; pārbaudiet tos pirms lēmumu pieņemšanas.' if rows else 'Datubāzē nav atrasti atbilstoši uzdevumi.')
+ mode='database_search'
+ if p.get('ai_summary') is True and os.getenv('OPENAI_API_KEY') and data:
+  try:
+   from openai import OpenAI
+   client=OpenAI(api_key=os.environ['OPENAI_API_KEY'],timeout=18)
+   response=client.chat.completions.create(model=os.getenv('OPENAI_MODEL','gpt-4.1-mini'),temperature=0,messages=[{'role':'system','content':'Atbildi latviski, īsi un profesionāli. Izmanto TIKAI sniegtos datubāzes ierakstus. Ja nepietiek datu, pasaki to. Atsaucies uz uzdevumu numuriem. Neizdomā faktus.'},{'role':'user','content':json.dumps({'jautajums':q,'uzdevumi':data},ensure_ascii=False)}],max_tokens=550)
+   answer=response.choices[0].message.content or answer;mode='ai_grounded_summary'
+  except Exception:pass
+ return jsonify(answer=answer,sources=data,mode=mode)
+
+@bp.post('/v61/documents')
+@auth
+def v61_document_add():
+ if e:=guard('vaditajs','parvaldnieks'):return e
+ p=request.get_json(silent=True) or {};oid=p.get('object_id')
+ if not _edit_object(oid):return error('Nav tiesību',403)
+ kinds={'apsekosanas_akts','defektu_akts','darba_uzdevums','cenas_piedavajums','tehniskais_atzinums'}
+ if p.get('kind') not in kinds:return error('Dokumenta veids nav atļauts')
+ body=str(p.get('body','')).strip()[:18000]
+ if not body:return error('Ievadiet dokumenta saturu')
+ tid=p.get('task_id') or None
+ if tid:
+  t=g.db.get(Task,int(tid))
+  if not t or t.object_id!=oid:return error('Uzdevums nepieder objektam')
+ x=GeneratedDocument(object_id=oid,task_id=tid,kind=p['kind'],title=str(p.get('title',''))[:240],body=body,created_by=g.user.id);g.db.add(x);g.db.flush();audit('document_created',x.id);g.db.commit();return jsonify(id=x.id),201
+
+@bp.get('/v61/documents')
+@auth
+def v61_documents():
+ oid=request.args.get('object_id',type=int)
+ if not oid or not _object_read(oid):return error('Nav piekļuves',403)
+ rows=g.db.query(GeneratedDocument).filter_by(object_id=oid).order_by(GeneratedDocument.id.desc()).all()
+ if g.user.role=='klients':rows=[] # Drafts are internal until explicit approval workflow exists.
+ return jsonify([dict(id=x.id,title=x.title,kind=x.kind,created=x.created.isoformat()) for x in rows])
+
+@bp.get('/v61/documents/<int:did>/pdf')
+@auth
+def v61_document_pdf(did):
+ x=g.db.get(GeneratedDocument,did)
+ if not x or not _object_read(x.object_id) or g.user.role=='klients':return error('Nav piekļuves',403)
+ o=g.db.get(Object,x.object_id);out=io.BytesIO();doc=SimpleDocTemplate(out,pagesize=A4)
+ styles=getSampleStyleSheet()
+ font_path=next((fp for fp in ['/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf','/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf'] if os.path.isfile(fp)),None)
+ if font_path:
+  if 'CivinityUnicode' not in pdfmetrics.getRegisteredFontNames():pdfmetrics.registerFont(TTFont('CivinityUnicode',font_path))
+  for sty in styles.byName.values():sty.fontName='CivinityUnicode'
+ story=[Paragraph(escape(x.title or x.kind),styles['Title']),Spacer(1,14),Paragraph('Objekts: '+escape(o.address),styles['Normal']),Spacer(1,12)]
+ for line in x.body.splitlines():story.append(Paragraph(escape(line) or ' ',styles['Normal']));story.append(Spacer(1,5))
+ story.extend([Spacer(1,18),Paragraph('DOKUMENTA PROJEKTS — nepieciešama pārbaude un apstiprināšana.',styles['Normal'])]);doc.build(story);out.seek(0)
+ return send_file(out,mimetype='application/pdf',as_attachment=True,download_name='CIVINITY_dokuments_'+str(did)+'.pdf')
+
+@bp.get('/v61/client/objects')
+@auth
+def v61_client_objects():
+ if g.user.role!='klients':return error('Tikai klientiem',403)
+ ids=g.db.query(ClientAccess.object_id).filter_by(user_id=g.user.id)
+ return jsonify([obj_dict(o) for o in g.db.query(Object).filter(Object.id.in_(ids)).all()])
+
+@bp.post('/v61/client/access')
+@auth
+def v61_client_access():
+ if e:=guard('vaditajs'):return e
+ p=request.get_json(silent=True) or {};u=g.db.get(User,p.get('user_id'));o=g.db.get(Object,p.get('object_id'))
+ if not u or u.role!='klients' or not o:return error('Norādiet klienta kontu un objektu')
+ if not g.db.query(ClientAccess).filter_by(user_id=u.id,object_id=o.id).first():g.db.add(ClientAccess(user_id=u.id,object_id=o.id))
+ audit('client_access',o.id,str(u.id));g.db.commit();return jsonify(ok=True)
+
+@bp.get('/v61/client/summary')
+@auth
+def v61_client_summary():
+ if g.user.role!='klients':return error('Tikai klientiem',403)
+ ids=[x.object_id for x in g.db.query(ClientAccess).filter_by(user_id=g.user.id)]
+ objs=[obj_dict(o) for o in g.db.query(Object).filter(Object.id.in_(ids)).all()] if ids else []
+ tasks=[dict(number='UZ-%06d'%t.id,object_id=t.object_id,description=(t.description or '')[:400],status=t.status) for t in g.db.query(Task).filter(Task.object_id.in_(ids),Task.status=='apstiprinats').order_by(Task.id.desc()).limit(100).all()] if ids else []
+ return jsonify(objects=objs,completed_tasks=tasks)
+
+@bp.get('/v61/equipment/<int:eid>/qr.png')
+@auth
+def v61_equipment_qr(eid):
+ x=g.db.get(Equipment,eid)
+ if not x or not _object_read(x.object_id):return error('Nav piekļuves',403)
+ import qrcode
+ # QR contains only an identifier; no tokens or confidential data.
+ img=qrcode.make('CIVINITY:EQ-'+str(eid));buf=io.BytesIO();img.save(buf,format='PNG');buf.seek(0)
+ return send_file(buf,mimetype='image/png')
+
+@bp.get('/v61/equipment/<int:eid>')
+@auth
+def v61_equipment_one(eid):
+ x=g.db.get(Equipment,eid)
+ if not x or not _object_read(x.object_id):return error('Nav piekļuves',403)
+ return jsonify(id=x.id,object_id=x.object_id,title=x.title,model=x.model,serial=x.serial,location=x.location)
