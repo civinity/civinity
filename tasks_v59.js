@@ -35,6 +35,22 @@ const objectSlot=$('civi-object-slot'),masterSlot=$('civi-master-slot');objectSl
 worker.multiple=true;worker.size=5;worker.style.display='none';
 $('civi-description-slot').append(desc);desc.rows=9;desc.placeholder='Aprakstiet darbus, vietu, apjomus un svarīgās prasības…';
 const extra=$('civi-extra-fields');for(const id of ['d_department','d_payment','d_priority']){const el=$(id);if(el)extra.append(el.closest('label')||el)}
+const ticketFields=[
+ ['title','Uzdevuma nosaukums','text'],['type','Tips / prioritāte','select','Normal|Urgent|Emergency'],
+ ['service','Pakalpojums','text'],['client','Klients','text'],['channel','Kanāls','text'],
+ ['company','Uzņēmums','select','Mājas|Solutions|Inservis|HM'],['work_act_no','Darba akta Nr.','text'],
+ ['work_manager','Darbu vadītājs','text'],['deadline','Izpildes termiņš','datetime-local'],
+ ['ticket_status','Pieteikuma statuss','select','Open|In progress|Waiting for estimate|Waiting for approval|Waiting for confirmation|Done'],
+ ['stage','Darba stadija','select','No task|No executor|Not started|In progress|Work stopped|Waiting for estimate|Waiting for approval|Waiting for confirmation|Returned for rework|Done – ticket not closed'],
+ ['held_by','Atbildīgā loma','select','Pārvaldnieks|Tech dept|Executor|Backoffice'],
+ ['who_holds_it','Atbildīgā persona','text'],['building_manager','Ēkas pārvaldnieks','text'],
+ ['selection_number','Atlases Nr.','text'],['in_selection','Atlasē','select','No|Yes']];
+const ticketPanel=document.createElement('section');ticketPanel.className='v67-ticket-panel';
+ticketPanel.innerHTML='<h3>Pieteikuma dati · Ticket report</h3><p>Grafas no Civinity Ticket report. Termiņa rādītāji tiek aprēķināti statistikā.</p>';
+const ticketGrid=document.createElement('div');ticketGrid.className='v67-ticket-grid';ticketPanel.append(ticketGrid);
+for(const [key,label,type,options] of ticketFields){const wrap=document.createElement('label');wrap.textContent=label;const el=document.createElement(type==='select'?'select':'input');el.id='v67-'+key;if(type==='select'){for(const option of options.split('|')){const o=document.createElement('option');o.value=option;o.textContent=option;el.append(o)}}else el.type=type;wrap.append(el);ticketGrid.append(wrap)}
+modal.insertBefore(ticketPanel,$('civi-extra-fields'));
+function ticketData(){const out={};for(const [key] of ticketFields)out[key]=$('v67-'+key)?.value||'';return out}
 if(createBtn)createBtn.remove();
 const objectInfo=()=>{const opt=object.selectedOptions[0];$('civi-object-info').textContent=opt?.textContent||'Objekts nav izvēlēts';};object.addEventListener('change',objectInfo);objectInfo();
 $('civi-object-search').addEventListener('input',e=>{const q=e.target.value.toLowerCase();for(const o of object.options)o.hidden=!o.textContent.toLowerCase().includes(q)});
@@ -54,7 +70,7 @@ $('civi-task-mic').onclick=async()=>{const b=$('civi-task-mic');if(speech){speec
  const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
  if(SR){speech=new SR();speech.lang='lv-LV';speech.continuous=true;speech.onresult=e=>{for(let i=e.resultIndex;i<e.results.length;i++)if(e.results[i].isFinal)desc.value+=(desc.value?' ':'')+e.results[i][0].transcript};speech.onerror=e=>status('Mikrofons: '+e.error);speech.onend=()=>{speech=null;b.textContent='🎙️ Ierunāt';if(desc.value.trim())$('civi-task-ai').click()};speech.start();b.textContent='■ Apturēt';status('Notiek balss atpazīšana…');return}
  try{if(!window.MediaRecorder)throw Error('Pārlūks neatbalsta audio ierakstu');const stream=await navigator.mediaDevices.getUserMedia({audio:true});chunks=[];recorder=new MediaRecorder(stream);recorder.ondataavailable=e=>chunks.push(e.data);recorder.onstop=async()=>{stream.getTracks().forEach(t=>t.stop());try{status('Atpazīst audio…');const blob=new Blob(chunks,{type:recorder.mimeType});const f=new FormData();f.append('audio',blob,'uzdevums.webm');const r=await request('/transcribe-task','POST',f,true);desc.value+=(desc.value?' ':'')+r.text;await $('civi-task-ai').click()}catch(e){status(e.message)}};recorder.start();b.textContent='■ Apturēt';status('Notiek audio ieraksts…')}catch(e){status(e.message)}};
-async function submit(){const ids=[...chosen];if(!object.value)return status('Izvēlieties objektu');if(!ids.length)return status('Izvēlieties vismaz vienu meistaru');if(!desc.value.trim())return status('Ievadiet darba aprakstu');const b=$('civi-task-submit');b.disabled=true;try{status('Saglabā uzdevumu…');const t=await request('/tasks','POST',{object_id:Number(object.value),worker_ids:ids,department:$('d_department').value,description:desc.value,payment:$('d_payment').value,priority:$('d_priority').value});let errors=0;for(const f of files){const fd=new FormData();fd.append('photo',f);try{await request('/tasks/'+t.id+'/photo','POST',fd,true)}catch(e){errors++;console.error(e)}}status('Izveidots '+t.number+(errors?' · '+errors+' foto neizdevās augšupielādēt':''));files.length=0;renderFiles();chosen.clear();drawMasters();desc.value='';await window.dispatchInit();go('tasks')}catch(e){status(e.message)}finally{b.disabled=false}}
+async function submit(){const ids=[...chosen];if(!object.value)return status('Izvēlieties objektu');if(!ids.length)return status('Izvēlieties vismaz vienu meistaru');if(!desc.value.trim())return status('Ievadiet darba aprakstu');const b=$('civi-task-submit');b.disabled=true;try{status('Saglabā uzdevumu…');const t=await request('/tasks','POST',{object_id:Number(object.value),worker_ids:ids,department:$('d_department').value,description:desc.value,payment:$('d_payment').value,priority:$('d_priority').value,ticket:ticketData()});let errors=0;for(const f of files){const fd=new FormData();fd.append('photo',f);try{await request('/tasks/'+t.id+'/photo','POST',fd,true)}catch(e){errors++;console.error(e)}}status('Izveidots '+t.number+(errors?' · '+errors+' foto neizdevās augšupielādēt':''));files.length=0;renderFiles();chosen.clear();drawMasters();desc.value='';await window.dispatchInit();go('tasks')}catch(e){status(e.message)}finally{b.disabled=false}}
 $('civi-task-submit').onclick=submit;$('civi-task-cancel').onclick=()=>go('tasks');
 function enhance(){if(!masters.length)loadMasters();}
 newBtn?.addEventListener('click',enhance);

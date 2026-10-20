@@ -42,6 +42,10 @@ class Rate(Base):
 class Task(Base):
  __tablename__='d_tasks'
  id=Column(Integer,primary_key=True); object_id=Column(Integer,ForeignKey('d_objects.id')); worker_id=Column(Integer,ForeignKey('d_users.id')); department=Column(String(100)); description=Column(Text); completed=Column(Text,default=''); status=Column(String(50),default='jauns'); payment=Column(String(30),default='included'); priority=Column(String(30),default='normal'); created_by=Column(Integer,ForeignKey('d_users.id')); approved_by=Column(Integer,ForeignKey('d_users.id')); approved_at=Column(DateTime(timezone=True)); completed_at=Column(DateTime(timezone=True)); created=Column(DateTime(timezone=True),default=NOW); rate_snapshot=Column(Numeric(12,2),default=0); material_total=Column(Numeric(12,2),default=0); manual_minutes=Column(Integer); correction_reason=Column(Text); pn_id=Column(Integer,ForeignKey('d_pn.id'))
+class TicketDetails(Base):
+ __tablename__='d_ticket_details'
+ task_id=Column(Integer,ForeignKey('d_tasks.id'),primary_key=True)
+ data=Column(Text,nullable=False,default='{}')
 class TaskAssignment(Base):
  __tablename__="d_task_assignments"
  id=Column(Integer,primary_key=True); task_id=Column(Integer,ForeignKey("d_tasks.id"),index=True); user_id=Column(Integer,ForeignKey("d_users.id"),index=True)
@@ -137,19 +141,27 @@ def minutes(t):
  if start:total+=max(0,int((NOW()-start.replace(tzinfo=timezone.utc)).total_seconds()//60))
  return total
 
+def ticket_meta(tid):
+ row=g.db.get(TicketDetails,tid)
+ try:return json.loads(row.data) if row else {}
+ except (ValueError,TypeError):return {}
+def valid_ticket_meta(raw):
+ if not isinstance(raw,dict):return {}
+ fields=('title','type','service','client','channel','company','work_act_no','work_manager','deadline','ticket_status','stage','held_by','who_holds_it','building_manager','selection_number','in_selection')
+ return {k:str(raw[k])[:500] for k in fields if k in raw and raw[k] is not None}
 def task_dict(t):
  o=g.db.get(Object,t.object_id); u=g.db.get(User,t.worker_id) if t.worker_id else None
  mats=g.db.query(Material).filter_by(task_id=t.id).all(); mins=minutes(t); labor=D(Decimal(mins)*D(t.rate_snapshot)/Decimal(60)); mt=sum((D(m.qty)*D(m.price) for m in mats),Decimal(0)); total=D(labor+mt)
- return dict(assignee_ids=[a.user_id for a in g.db.query(TaskAssignment).filter_by(task_id=t.id).all()] or ([t.worker_id] if t.worker_id else []),id=t.id,number=f'UZ-{t.id:06d}',object_id=t.object_id,object=o.address if o else '',object_code=o.code if o else '',worker_id=t.worker_id,worker=u.name if u else '',department=t.department,description=t.description,completed=t.completed,status=t.status,payment=t.payment,priority=t.priority,created=t.created.isoformat(),completed_at=t.completed_at.isoformat() if t.completed_at else None,minutes=mins,hours=round(mins/60,2),rate=float(t.rate_snapshot or 0),labor=float(labor),materials=float(mt),total=float(total),pn_id=t.pn_id,materials_list=[dict(id=m.id,name=m.name,unit=m.unit,qty=float(m.qty),price=float(m.price)) for m in mats])
+ return dict(ticket=ticket_meta(t.id),assignee_ids=[a.user_id for a in g.db.query(TaskAssignment).filter_by(task_id=t.id).all()] or ([t.worker_id] if t.worker_id else []),id=t.id,number=f'UZ-{t.id:06d}',object_id=t.object_id,object=o.address if o else '',object_code=o.code if o else '',worker_id=t.worker_id,worker=u.name if u else '',department=t.department,description=t.description,completed=t.completed,status=t.status,payment=t.payment,priority=t.priority,created=t.created.isoformat(),completed_at=t.completed_at.isoformat() if t.completed_at else None,minutes=mins,hours=round(mins/60,2),rate=float(t.rate_snapshot or 0),labor=float(labor),materials=float(mt),total=float(total),pn_id=t.pn_id,materials_list=[dict(id=m.id,name=m.name,unit=m.unit,qty=float(m.qty),price=float(m.price)) for m in mats])
 
 @bp.post('/register')
 def register():
  if not engine:return error('DATABASE_URL nav konfigurēts',503)
  p=request.get_json(silent=True) or {}; email=str(p.get('email','')).strip().lower();password=str(p.get('password',''))
- if '@' not in email or len(password)<12 or not str(p.get('name','')).strip():return error('Vārds, e-pasts un parole (vismaz 12 zīmes) ir obligāti')
+ if '@' not in email or len(password)<12 :return error('E-pasts un parole (vismaz 12 zīmes) ir obligāti')
  with Session.begin() as s:
   if s.query(User).filter_by(email=email).first():return error('E-pasts jau reģistrēts',409)
-  s.add(User(name=p['name'].strip(),email=email,password=generate_password_hash(password),role='meistars',approved=False))
+  s.add(User(name=email.split('@')[0],email=email,password=generate_password_hash(password),role='meistars',approved=False))
  return jsonify(message='Reģistrācija nosūtīta administratoram'),201
 @bp.post('/login')
 def login():
@@ -339,6 +351,7 @@ def task_create():
  for uid in ids:
   g.db.add(TaskAssignment(task_id=t.id,user_id=uid))
   g.db.add(TaskNotification(task_id=t.id,user_id=uid))
+ g.db.add(TicketDetails(task_id=t.id,data=json.dumps(valid_ticket_meta(p.get('ticket')),ensure_ascii=False)))
  audit('task_created',t.id);g.db.commit();return jsonify(task_dict(t)),201
 @bp.patch('/tasks/<int:tid>')
 @auth
@@ -347,6 +360,10 @@ def task_edit(tid):
  if not t or not task_access(t):return error('Nav piekļuves',403)
  if t.pn_id or t.status=='apstiprinats':return error('Apstiprināts vai aktā iekļauts uzdevums nav maināms',409)
  p=request.get_json(silent=True) or {}
+ if 'ticket' in p and allowed('vaditajs','parvaldnieks'):
+  detail=g.db.get(TicketDetails,tid)
+  if not detail:detail=TicketDetails(task_id=tid);g.db.add(detail)
+  detail.data=json.dumps({**ticket_meta(tid),**valid_ticket_meta(p['ticket'])},ensure_ascii=False)
  if 'completed' in p:t.completed=str(p['completed'])[:12000]
  if 'materials' in p:
   if not isinstance(p['materials'],list) or len(p['materials'])>100:return error('Materiālu saraksts neder')
