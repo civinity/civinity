@@ -1,0 +1,11 @@
+/* V6.9: predictable navigation and workspace visibility */
+#civi-dispatch-nav:not(.v65-expanded){display:none!important}
+#civi-dispatch-nav.v65-expanded{display:flex!important;flex-direction:column}
+#civi-dispatch-nav .civi-subnav-button{font-family:inherit!important;font-size:14px!important;font-weight:400!important;background:transparent!important;box-shadow:none!important}
+#civi-dispatch-nav .civi-subnav-button:hover{background:transparent!important;color:#fff!important}
+#civi-dispatch-nav .v69-selected{font-weight:600!important}
+#dispatch #d_workspace.v69-list-mode > h2,#dispatch #d_workspace.v69-list-mode > div[style*="overflow:auto"],#dispatch #d_workspace.v69-list-mode #d_manage,#dispatch #d_workspace.v69-list-mode #d_detail,#dispatch #d_workspace.v69-list-mode #d_useradmin{display:none!important}
+#dispatch #d_workspace.v69-new-mode > h2,#dispatch #d_workspace.v69-new-mode > div[style*="overflow:auto"],#dispatch #d_workspace.v69-new-mode #d_detail,#dispatch #d_workspace.v69-new-mode #d_useradmin{display:none!important}
+#dispatch #d_workspace.v69-stats-mode > h2,#dispatch #d_workspace.v69-stats-mode > div[style*="overflow:auto"],#dispatch #d_workspace.v69-stats-mode #d_manage,#dispatch #d_workspace.v69-stats-mode #d_detail,#dispatch #d_workspace.v69-stats-mode #d_useradmin{display:none!important}
+#v67-company label{font-size:14px!important;font-weight:500!important}
+main>.topbar{margin-top:0!important;top:0!important}
