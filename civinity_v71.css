@@ -1,0 +1,12 @@
+/* V7.1 navigation: overrides older accumulated styles */
+#v71-company{margin:8px 12px 15px;padding:9px 12px;border:1px solid #ffffff2c;border-radius:10px}
+#v71-company label{display:block;color:#fff;font:inherit;font-size:14px;font-weight:400;margin:0 0 7px}
+#v71-company select{display:block;width:100%;min-width:0;font:inherit;font-size:14px;padding:9px 8px;border-radius:8px}
+#civi-dispatch-nav.v71-menu,#v69-company-sub.v71-menu{padding:2px 8px 8px 26px;gap:2px;flex-direction:column}
+#civi-dispatch-nav.v71-menu[hidden],#v69-company-sub.v71-menu[hidden]{display:none!important}
+#civi-dispatch-nav.v71-menu:not([hidden]),#v69-company-sub.v71-menu:not([hidden]){display:flex!important}
+#civi-dispatch-nav.v71-menu button,#v69-company-sub.v71-menu button{display:block!important;background:transparent!important;color:#edf5ff!important;border:0!important;border-radius:7px!important;text-align:left!important;width:100%!important;padding:10px 12px!important;font:inherit!important;font-size:14px!important;font-weight:400!important;cursor:pointer!important}
+#civi-dispatch-nav.v71-menu button:hover,#v69-company-sub.v71-menu button:hover{background:transparent!important;color:#fff!important}
+#civi-dispatch-nav.v71-menu .v71-selected,#v69-company-sub.v71-menu .v71-selected{font-weight:600!important}
+#nav .v71-chevron{margin-left:auto;opacity:.75}
+#v68-ticket-register:not(.hidden),#v67-ticket-statistics:not(.hidden){display:block}
