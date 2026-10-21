@@ -1,0 +1,11 @@
+/* V7.0: overrides all earlier sidebar experiments. */
+#v70-company{margin:8px 12px 14px;padding:11px 12px;border:1px solid rgba(255,255,255,.22);border-radius:11px}
+#v70-company label{display:block!important;font-size:15px!important;font-weight:400!important;line-height:1.4!important;color:#edf5ff!important;margin:0 0 7px!important}
+#v70-company select{display:block;width:100%;max-width:100%;font-size:15px!important;font-weight:400!important;padding:9px 7px;border-radius:8px}
+#nav .v70-parent{display:flex!important;align-items:center;gap:9px;width:100%;font:inherit!important;font-size:15px!important;font-weight:400!important}
+#nav .v70-arrow{margin-left:auto;opacity:.8}
+#civi-dispatch-nav.v70-submenu,#v69-company-sub.v70-submenu{padding:3px 9px 8px 27px!important;display:flex!important;flex-direction:column!important;gap:2px!important}
+#civi-dispatch-nav.v70-submenu[hidden],#v69-company-sub.v70-submenu[hidden]{display:none!important}
+#civi-dispatch-nav.v70-submenu button,#v69-company-sub.v70-submenu button{display:block!important;position:static!important;width:100%;padding:10px 11px!important;text-align:left;font-family:inherit!important;font-size:15px!important;font-weight:400!important;color:#eaf2fc!important;border:0!important;border-radius:7px;background:transparent!important;cursor:pointer}
+#civi-dispatch-nav.v70-submenu button:hover,#v69-company-sub.v70-submenu button:hover{background:transparent!important;color:#fff!important}
+#v68-ticket-register:not(.hidden),#v67-ticket-statistics:not(.hidden){display:block!important}

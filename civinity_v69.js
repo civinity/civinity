@@ -1,33 +1,24 @@
-/* V6.9: stable dispatcher navigation after inline-script repair. */
+/* V6.9: stable sidebar accordions and functional task routes. */
 (()=>{'use strict';
-const $=id=>document.getElementById(id),nav=$('nav'),parent=nav?.querySelector('[data-page="dispatch"]'),sub=$('civi-dispatch-nav');
-if(!nav||!parent||!sub)return;
-// Old versions registered overlapping listeners. Capture navigation and keep one authoritative path.
+const $=id=>document.getElementById(id), nav=$('nav'), sub=$('civi-dispatch-nav');
+if(!nav||!sub)return;
+const dispatch=nav.querySelector('[data-page="dispatch"]');
+const companySelect=$('company'),companyLabel=document.querySelector('label[for="company"]');
+// One company selector, below the logo. Never duplicate or discard the real select element.
+if(companySelect){let host=$('v69-company-host');if(!host){host=document.createElement('div');host.id='v69-company-host';(document.querySelector('aside .brand')||nav).after(host)}if(companyLabel)host.append(companyLabel);host.append(companySelect)}
+// The company management module is a collapsible group, not a standalone top-level route.
+const companies=nav.querySelector('[data-page="companies"]');
+if(companies){const group=$('v69-company-sub')||document.createElement('div');group.id='v69-company-sub';group.className='v69-sidebar-sub';group.hidden=true;companies.after(group);group.replaceChildren();
+ const openCompany=(kind)=>{window.page('companies');if(kind==='stats')$('v68-company-stats')?.click();else $('v68-company-list')?.click()};
+ for(const [title,kind] of [['Jaunie uzņēmumi','new'],['Statistika','stats']]){const b=document.createElement('button');b.type='button';b.textContent=title;b.addEventListener('click',e=>{e.stopPropagation();openCompany(kind)});group.append(b)}
+ companies.replaceWith(companies.cloneNode(true));const newParent=nav.querySelector('[data-page="companies"]');newParent.append(document.createElement('span'));newParent.lastElementChild.className='v69-chevron';newParent.lastElementChild.textContent='⌄';newParent.setAttribute('aria-expanded','false');newParent.addEventListener('click',e=>{e.preventDefault();const expanded=group.hidden;group.hidden=!expanded;newParent.setAttribute('aria-expanded',String(expanded));if(expanded)openCompany('new')});}
+// Replace prior conflicting click handlers on the task parent, but keep its location and appearance.
+if(dispatch){const fresh=dispatch.cloneNode(true);dispatch.replaceWith(fresh);fresh.setAttribute('aria-expanded','false');sub.classList.remove('v65-expanded');sub.style.display='none';fresh.addEventListener('click',e=>{e.preventDefault();const expanded=fresh.getAttribute('aria-expanded')!=='true';fresh.setAttribute('aria-expanded',String(expanded));sub.classList.toggle('v65-expanded',expanded);sub.style.display=expanded?'flex':'none';if(expanded)activate('list')})}
 sub.replaceChildren();
-const entries=[['list','Saraksts'],['new','Jauns uzdevums'],['stats','Statistika']];
-let current='list',expanded=false;
-function show(kind){current=kind;window.page('dispatch');
-const register=$('v68-ticket-register'),stats=$('v67-ticket-statistics'),workspace=$('d_workspace'),auth=$('d_auth');
-if(register)register.classList.toggle('hidden',kind!=='list');
-if(stats)stats.classList.toggle('hidden',kind!=='stats');
-if(workspace)workspace.classList.toggle('v69-list-mode',kind==='list');
-if(workspace)workspace.classList.toggle('v69-new-mode',kind==='new');
-if(workspace)workspace.classList.toggle('v69-stats-mode',kind==='stats');
-if(kind==='new' && typeof window.civiDispatchShow==='function')window.civiDispatchShow('new');
-if(kind==='list')$('v68-ticket-reload')?.click();
-if(kind==='stats')$('v67-refresh')?.click();
-sub.querySelectorAll('button').forEach(b=>b.classList.toggle('v69-selected',b.dataset.kind===kind));
-if(auth&&!auth.classList.contains('hidden'))$('d_message').textContent='Pieslēdzieties, lai skatītu uzdevumus.';
-}
-entries.forEach(([kind,label])=>{const b=document.createElement('button');b.type='button';b.className='civi-subnav-button';b.dataset.kind=kind;b.textContent=label;b.addEventListener('click',e=>{e.preventDefault();e.stopPropagation();show(kind)});sub.append(b)});
-parent.addEventListener('click',e=>{e.preventDefault();e.stopImmediatePropagation();expanded=!expanded;sub.classList.toggle('v65-expanded',expanded);parent.setAttribute('aria-expanded',String(expanded));if(expanded)show(current)},true);
-// Restore company management navigation, regardless of previous script failure.
-let company=nav.querySelector('[data-page="companies"]');if(!company){company=document.createElement('button');company.type='button';company.className='nav';company.dataset.page='companies';company.innerHTML='<span class="nav-icon">▣</span><span>Uzņēmumi</span>';nav.querySelector('[data-page="objects"]')?.before(company)}
-company.addEventListener('click',e=>{e.preventDefault();e.stopImmediatePropagation();window.page('companies')},true);
-// Company selector belongs beneath CIVINITY brand, not in the top toolbar.
-const selector=$('company'),label=document.querySelector('label[for="company"]'),brand=document.querySelector('aside .brand');if(selector&&brand){let box=$('v67-company');if(!box){box=document.createElement('div');box.id='v67-company';brand.after(box)}if(label)box.append(label);box.append(selector)}
-// Make Enter submit login only, not registration.
-$('d_password')?.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();window.dispatchLogin?.()}});
-// Remove redundant top-level documents entry; document center remains in Atskaites.
-nav.querySelector('[data-page="documents"]')?.remove();
+function base(){window.page('dispatch');$('v67-ticket-statistics')?.classList.add('hidden');$('v68-ticket-register')?.classList.add('hidden')}
+function activate(mode){base();if(mode==='list'){window.civiDispatchShow?.('tasks');$('v68-ticket-register')?.classList.remove('hidden');$('v68-ticket-reload')?.click()}else if(mode==='new'){window.civiDispatchShow?.('new');const form=$('civi-create-modal');if(form)form.classList.remove('hidden');}else if(mode==='stats'){window.civiDispatchShow?.('tasks');document.querySelectorAll('#dispatch .d-view').forEach(e=>e.classList.remove('active'));$('v67-ticket-statistics')?.classList.remove('hidden');$('v67-refresh')?.click()}
+ sub.querySelectorAll('button').forEach(b=>b.classList.toggle('v69-selected',b.dataset.action===mode));}
+for(const [title,action] of [['Saraksts','list'],['Jauns uzdevums','new'],['Statistika','stats']]){const b=document.createElement('button');b.type='button';b.className='civi-subnav-button v69-task-link';b.dataset.action=action;b.textContent=title;b.addEventListener('click',e=>{e.preventDefault();e.stopPropagation();activate(action)});sub.append(b)}
+// The older internal dispatcher menu must not present duplicated controls.
+const internal=document.querySelector('#d_workspace .d-menu');if(internal)internal.style.display='none';
 })();

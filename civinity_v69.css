@@ -1,11 +1,3 @@
-/* V6.9: predictable navigation and workspace visibility */
-#civi-dispatch-nav:not(.v65-expanded){display:none!important}
-#civi-dispatch-nav.v65-expanded{display:flex!important;flex-direction:column}
-#civi-dispatch-nav .civi-subnav-button{font-family:inherit!important;font-size:14px!important;font-weight:400!important;background:transparent!important;box-shadow:none!important}
-#civi-dispatch-nav .civi-subnav-button:hover{background:transparent!important;color:#fff!important}
-#civi-dispatch-nav .v69-selected{font-weight:600!important}
-#dispatch #d_workspace.v69-list-mode > h2,#dispatch #d_workspace.v69-list-mode > div[style*="overflow:auto"],#dispatch #d_workspace.v69-list-mode #d_manage,#dispatch #d_workspace.v69-list-mode #d_detail,#dispatch #d_workspace.v69-list-mode #d_useradmin{display:none!important}
-#dispatch #d_workspace.v69-new-mode > h2,#dispatch #d_workspace.v69-new-mode > div[style*="overflow:auto"],#dispatch #d_workspace.v69-new-mode #d_detail,#dispatch #d_workspace.v69-new-mode #d_useradmin{display:none!important}
-#dispatch #d_workspace.v69-stats-mode > h2,#dispatch #d_workspace.v69-stats-mode > div[style*="overflow:auto"],#dispatch #d_workspace.v69-stats-mode #d_manage,#dispatch #d_workspace.v69-stats-mode #d_detail,#dispatch #d_workspace.v69-stats-mode #d_useradmin{display:none!important}
-#v67-company label{font-size:14px!important;font-weight:500!important}
-main>.topbar{margin-top:0!important;top:0!important}
+#v69-company-host{margin:9px 12px 15px;padding:10px 12px;border:1px solid #ffffff2a;border-radius:11px}#v69-company-host label{display:block;font:inherit;font-size:14px;font-weight:500;color:#e9f1fb;margin-bottom:7px!important}#v69-company-host select{width:100%;min-width:0;font:inherit;font-size:14px;border-radius:8px;padding:9px 7px}
+#v69-company-sub[hidden]{display:none!important}#v69-company-sub{display:flex;flex-direction:column;padding:2px 9px 8px 29px;gap:3px}#v69-company-sub button{font:inherit;font-size:14px;font-weight:400;color:#e9f1fb;background:transparent;border:0;text-align:left;padding:9px 12px;border-radius:7px;cursor:pointer}#v69-company-sub button:hover,#civi-dispatch-nav .v69-task-link:hover{background:transparent!important;color:#fff!important}
+#civi-dispatch-nav:not(.v65-expanded){display:none!important}#civi-dispatch-nav.v65-expanded{display:flex!important;flex-direction:column!important;gap:2px;padding-left:28px}#civi-dispatch-nav .v69-task-link{display:block!important;width:100%;font:inherit;font-size:14px;font-weight:400;text-align:left;background:transparent;border:0;padding:10px 12px;cursor:pointer;color:#e9f1fb}#civi-dispatch-nav .v69-selected{font-weight:600}#nav [data-page="companies"] .v69-chevron{margin-left:auto}
