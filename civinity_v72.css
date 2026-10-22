@@ -1,0 +1,11 @@
+/* Highest-priority rules to undo older navigation hiding selectors. */
+#civi-dispatch-nav.v72-task-menu[hidden]{display:none!important}
+#civi-dispatch-nav.v72-task-menu:not([hidden]){display:flex!important;flex-direction:column!important;gap:2px!important;padding:4px 8px 8px 28px!important}
+#civi-dispatch-nav.v72-task-menu button.v72-link,#civi-dispatch-nav.v72-task-menu button.v72-link:not(:first-child){display:block!important;visibility:visible!important;position:static!important;opacity:1!important;width:100%!important;height:auto!important;min-height:38px!important;background:transparent!important;color:#edf5ff!important;border:0!important;text-align:left!important;font-family:inherit!important;font-size:15px!important;font-weight:400!important;padding:9px 10px!important;cursor:pointer!important}
+#civi-dispatch-nav.v72-task-menu button.v72-link:hover{background:transparent!important;color:white!important}
+#civi-dispatch-nav.v72-task-menu button.v72-current{font-weight:600!important}
+#v69-company-sub{display:none!important}
+#v72-company-form{max-width:640px;display:grid;gap:14px;margin-top:16px}
+#v72-company-form label{display:block;font-weight:500}
+#v72-company-form input{display:block;width:100%;margin-top:6px;padding:12px;border:1px solid #cbd9e5;border-radius:8px}
+#v71-company label{font-size:15px!important}
