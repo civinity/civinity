@@ -22,12 +22,50 @@ $('v68-company-list').onclick=()=>renderCompanies(false);$('v68-company-stats').
 const oldPage=window.page;window.page=function(name){if(name==='companies'){document.querySelectorAll('.page').forEach(x=>x.classList.toggle('hidden',x!==companies));document.querySelectorAll('#nav .nav').forEach(x=>x.classList.toggle('active',x===companyBtn));$('pageTitle').textContent='Uzņēmumi';renderCompanies();return}return oldPage(name)};
 companyBtn.onclick=()=>window.page('companies');
 // Register columns follow the uploaded Tickets worksheet (25 columns).
-const cols=[['id','ID'],['title','Title'],['assignee','Assignee'],['type','Type'],['service','Service'],['client','Client'],['channel','Channel'],['company','Company'],['work_act_no','Work act no.'],['work_manager','Work manager'],['created','Created'],['deadline','Deadline'],['overdue','Days overdue'],['deadline_status','Deadline status'],['new7','New (7 d)'],['in_selection','In selection'],['selection_number','Sel #'],['stage','Stage'],['held_by','Held by'],['who_holds_it','Who holds it'],['tasks','Tasks'],['executors','Executors'],['ticket_status','Ticket status'],['object','Object (address)'],['building_manager','Pārvaldnieks (building)']];
-const register=document.createElement('section');register.id='v68-ticket-register';register.className='v68-ticket-register hidden';register.innerHTML='<div class="v68-register-top"><div><h2>Uzdevumu saraksts · Ticket report</h2><p>25 kolonnas pēc Excel parauga; dati no saglabātajiem uzdevumiem.</p></div><button type="button" id="v68-ticket-reload">↻ Atjaunot</button></div><div class="v68-register-filters"><input id="v68-ticket-search" type="search" placeholder="Meklēt pēc ID, adreses, statusa, izpildītāja…"><span id="v68-ticket-count"></span></div><div class="v68-ticket-scroll"><table><thead><tr>'+cols.map(x=>'<th>'+escapeHtml(x[1])+'</th>').join('')+'</tr></thead><tbody id="v68-ticket-body"></tbody></table></div><p class="hint" id="v68-ticket-msg"></p>';
+const cols=[['id','ID'],['type','Type'],['work_manager','Work manager'],['object','Object'],['assignee','Assignee'],['title','Title'],['service','Service'],['status','Status'],['preliminary_price','Preliminary price'],['contractor','Contractor'],['created','Created at'],['description','Description'],['comment','Comment']];
+const register=document.createElement('section');register.id='v68-ticket-register';register.className='v68-ticket-register hidden';register.innerHTML='<div class="v68-register-top"><div><h2>Uzdevumu saraksts · Ticket report</h2><p>13 galvenās kolonnas un statusa indikators; dati no saglabātajiem uzdevumiem.</p></div><button type="button" id="v68-ticket-reload">↻ Atjaunot</button></div><div class="v68-register-filters"><input id="v68-ticket-search" type="search" placeholder="Meklēt pēc ID, adreses, statusa, izpildītāja…"><span id="v68-ticket-count"></span></div><div class="v68-ticket-scroll"><table><thead><tr>'+cols.map(x=>'<th>'+escapeHtml(x[1])+'</th>').join('')+'</tr></thead><tbody id="v68-ticket-body"></tbody></table></div><p class="hint" id="v68-ticket-msg"></p>';
 $('dispatch')?.append(register);
 let data=[];function dateVal(s){const d=new Date(s||'');return Number.isNaN(+d)?'':d.toLocaleDateString('lv-LV')}
-function get(t,key){const m=t.ticket||{};if(key==='id')return t.number||t.id;if(key==='assignee')return t.worker||'';if(key==='created')return dateVal(t.created);if(key==='deadline')return dateVal(m.deadline);if(key==='overdue'){if(!m.deadline||['Done','Closed'].includes(m.ticket_status))return '';return Math.max(0,Math.floor((Date.now()-new Date(m.deadline))/86400000))}if(key==='deadline_status')return m.deadline?(get(t,'overdue')>0?'Overdue':'On time'):'';if(key==='new7')return t.created&&Date.now()-new Date(t.created)<7*86400000?'Yes':'No';if(key==='tasks')return t.description||'';if(key==='executors')return t.worker||'';if(key==='object')return t.object||'';return m[key]??''}
-function draw(){const q=$('v68-ticket-search').value.toLowerCase();const filtered=data.filter(t=>!q||cols.some(([key])=>String(get(t,key)).toLowerCase().includes(q)));$('v68-ticket-count').textContent=filtered.length+' uzdevumi';$('v68-ticket-body').innerHTML=filtered.map(t=>'<tr>'+cols.map(([key])=>'<td>'+escapeHtml(get(t,key))+'</td>').join('')+'</tr>').join('')||'<tr><td colspan="25">Nav saglabātu uzdevumu. Excel vēsturiskie ieraksti nav importēti.</td></tr>'}
+function get(t,key){
+ const m=t.ticket||{};
+ const value=(...keys)=>{for(const k of keys){const v=m[k]??t[k];if(v!==undefined&&v!==null&&String(v).trim()!=='')return v}return ''};
+ if(key==='id')return value('number','id');
+ if(key==='type')return value('type','task_type');
+ if(key==='work_manager')return value('work_manager','manager');
+ if(key==='object')return value('object','object_name','address');
+ if(key==='assignee')return value('assignee','worker','executors');
+ if(key==='title')return value('title','name');
+ if(key==='service')return value('service','department');
+ if(key==='status')return value('status','ticket_status','stage');
+ if(key==='preliminary_price')return value('preliminary_price','preliminaryPrice','estimated_price','price');
+ if(key==='contractor')return value('contractor','supplier');
+ if(key==='created')return dateVal(value('created','created_at'));
+ if(key==='description')return value('description','tasks');
+ if(key==='comment')return value('comment','comments','note','notes');
+ return value(key)
+}
+function indicator(t){
+ const status=String(get(t,'status')).toLowerCase();
+ const done=/done|closed|completed|pabeigts|izpildīts|izpildits|gatavs|pabeig/.test(status);
+ if(done)return ['done','Izpildīts'];
+ const raw=(t.ticket||{}).deadline||t.deadline||t.due_date||t.due_at;
+ const due=raw?new Date(raw):null;
+ if(due&&!Number.isNaN(+due)&&due.getTime()<Date.now())return ['overdue','Nokavēts termiņš'];
+ if(/process|progress|procesā|procesa|working|started|izpildē|izpilde/.test(status))return ['progress','Procesā'];
+ return ['neutral','Nav noteikts'];
+}
+function draw(){
+ const q=$('v68-ticket-search').value.toLowerCase();
+ const filtered=data.filter(t=>!q||cols.some(([key])=>String(get(t,key)).toLowerCase().includes(q)));
+ $('v68-ticket-count').textContent=filtered.length+' uzdevumi';
+ const tbody=$('v68-ticket-body');tbody.replaceChildren();
+ if(!filtered.length){const tr=document.createElement('tr'),td=document.createElement('td');td.colSpan=cols.length+1;td.textContent='Nav saglabātu uzdevumu. Excel vēsturiskie ieraksti nav importēti.';tr.append(td);tbody.append(tr);return}
+ for(const t of filtered){
+  const tr=document.createElement('tr');
+  for(const [key,label] of cols){const td=document.createElement('td');td.dataset.label=label;const val=String(get(t,key));td.textContent=val;td.title=val;tr.append(td)}
+  const td=document.createElement('td');td.dataset.label='Indikators';td.className='v73-indicator-cell';const [state,label]=indicator(t);const dot=document.createElement('span');dot.className='v73-status-dot v73-'+state;dot.title=label;dot.setAttribute('aria-label',label);dot.setAttribute('role','img');td.append(dot);tr.append(td);tbody.append(tr)
+ }
+}
 async function loadTickets(){const token=sessionStorage.getItem('dispatch_token');if(!token){$('v68-ticket-msg').textContent='Lai skatītu uzdevumus, pieslēdzieties savam kontam.';return}try{const res=await fetch('https://civinity-ai-api.onrender.com/api/dispatch/tasks',{headers:{Authorization:'Bearer '+token}});if(!res.ok)throw Error('HTTP '+res.status);const rows=await res.json();if(!Array.isArray(rows))throw Error('Nepareizs servera datu formāts');data=rows;draw();$('v68-ticket-msg').textContent='Tabulā redzami tikai serverī saglabātie uzdevumi. Excel vēsturiskie dati nav importēti.'}catch(e){$('v68-ticket-msg').textContent='Neizdevās ielādēt uzdevumus: '+e.message}}
 $('v68-ticket-search').addEventListener('input',draw);$('v68-ticket-reload').onclick=loadTickets;
 })();
