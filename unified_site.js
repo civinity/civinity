@@ -55,9 +55,26 @@ window.dispatchLogout=async function(){
  finally{sessionStorage.removeItem('dispatch_token');setGate(false);}
 };
 const oldLogin=window.dispatchLogin;
+let loginPending=false;
 window.dispatchLogin=async function(){
- if(typeof oldLogin==='function')await oldLogin();
- if(token())await verify();
+ if(loginPending)return;
+ loginPending=true;
+ const button=loginAction;
+ const oldLabel=button.textContent;
+ button.disabled=true;button.textContent='Pieslēdzas…';
+ msg.textContent='Pārbauda piekļuvi…';
+ try{
+  if(typeof oldLogin!=='function')throw new Error('Autorizācijas modulis nav pieejams');
+  await oldLogin();
+  if(!token()){
+   // The original dispatcher writes server errors to d_message; do not leave the screen silent.
+   if(!msg.textContent||msg.textContent==='Pārbauda piekļuvi…')msg.textContent='Pieslēgšanās neizdevās. Pārbaudiet e-pastu un paroli.';
+   return;
+  }
+  await verify();
+  if(!document.body.classList.contains('site-authenticated')&&!msg.textContent.includes('gaida'))msg.textContent='Neizdevās atvērt sistēmu. Pārbaudiet konta piekļuvi.';
+ }catch(e){msg.textContent='Pieslēgšanās kļūda: '+(e?.message||'Nezināma kļūda');}
+ finally{loginPending=false;button.disabled=false;button.textContent=oldLabel;}
 };
 const oldRegister=window.dispatchRegister;
 window.dispatchRegister=async function(){if(typeof oldRegister==='function')await oldRegister();};

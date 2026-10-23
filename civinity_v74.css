@@ -1,0 +1,12 @@
+/* V7.4 — mobile auth and required assignee visibility */
+#civi-create-panel .civi-master-required{display:block!important;visibility:visible!important;opacity:1!important;margin:18px 30px 6px!important;border:2px solid #9bbfe5!important;background:#f1f7ff!important;}
+#civi-create-panel .civi-master-required>label{font-size:16px!important;}
+#civi-create-panel .civi-master-required #civi-master-search{display:block!important;width:100%!important;min-height:44px!important;font-size:16px!important;}
+#civi-create-panel .civi-master-required .civi-master-choices{display:block!important;min-height:46px;max-height:210px;overflow:auto;}
+#civi-create-panel .civi-master-required .civi-master-row input{width:auto!important;min-width:18px;min-height:18px;}
+#civi-create-panel .civi-master-required .civi-selected-masters{min-height:10px;}
+#u_gate{height:100dvh!important;max-height:100dvh;overflow-y:auto!important;align-items:center!important;box-sizing:border-box!important;overscroll-behavior:contain;}
+#u_gate .u-login-card{max-width:calc(100vw - 24px)!important;max-height:calc(100dvh - 24px);overflow-y:auto;}
+#u_gate #d_message{display:block!important;min-height:22px!important;overflow-wrap:anywhere;}
+#u_gate #d_auth button[onclick="dispatchLogin()"]{touch-action:manipulation;cursor:pointer;}
+@media(max-width:780px){#civi-create-panel .civi-master-required{margin:12px 14px!important;}#u_gate .u-login-card{padding:20px!important;}#u_gate #d_auth .grid2 label input{font-size:16px!important;}}
