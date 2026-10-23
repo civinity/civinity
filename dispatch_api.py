@@ -123,7 +123,7 @@ def auth(f):
 def allowed(*roles):return g.user.role in roles or g.user.role=='administrators'
 def guard(*roles):return None if allowed(*roles) else error('Nepietiek tiesību',403)
 def audit(kind,ref,detail=''):g.db.add(Audit(actor=g.user.id,kind=kind,ref=ref,detail=detail))
-def json_user(u):return dict(id=u.id,name=u.name,email=u.email,role=u.role,approved=u.approved,department=u.department or '',position=u.position or '',avatar=u.avatar or '')
+def json_user(u):return dict(id=u.id,name=u.name,email=u.email,role=u.role,approved=u.approved,active=u.active,created=u.created.isoformat() if u.created else None,department=u.department or '',position=u.position or '',avatar=u.avatar or '')
 def obj_dict(o):return dict(id=o.id,name=o.name,address=o.address,code=o.code,ownership=o.ownership,company=o.company,customer=o.customer,contract=o.contract,rate=float(o.rate or 0),vat=float(o.vat or 21),latitude=float(o.latitude) if o.latitude is not None else None,longitude=float(o.longitude) if o.longitude is not None else None,radius=o.radius,manager_id=o.manager_id,cadastral_number=o.cadastral_number or '')
 def object_access(o):return allowed('vaditajs') or (g.user.role=='parvaldnieks' and o.manager_id==g.user.id)
 def task_access(t):
@@ -222,6 +222,7 @@ def user_update(uid):
  u=g.db.get(User,uid)
  if not u:return error('Nav atrasts',404)
  p=request.get_json(silent=True) or {}
+ if uid==g.user.id and (p.get('role',u.role)!='administrators' or p.get('active',True) is False or p.get('approved',True) is False):return error('Nevar noņemt savas administratora tiesības vai bloķēt savu kontu',400)
  if 'role' in p:
   if p['role'] not in ROLES:return error('Nepareiza loma')
   u.role=p['role']
@@ -229,7 +230,42 @@ def user_update(uid):
  if 'active' in p:u.active=bool(p['active'])
  if 'department' in p:u.department=str(p['department']).strip()[:120]
  if 'position' in p:u.position=str(p['position']).strip()[:120]
+ if 'name' in p:
+  if not str(p['name']).strip():return error('Vārds ir obligāts')
+  u.name=str(p['name']).strip()[:160]
+ if 'email' in p:
+  email=str(p['email']).strip().lower()
+  if '@' not in email:return error('Nepareizs e-pasts')
+  if g.db.query(User).filter(User.email==email,User.id!=uid).first():return error('E-pasts jau tiek izmantots',409)
+  u.email=email
  audit('user_update',uid,json.dumps(p));g.db.commit();return jsonify(json_user(u))
+@bp.post('/admin/users')
+@auth
+def admin_user_create():
+ if g.user.role!='administrators':return error('Tikai administrators',403)
+ p=request.get_json(silent=True) or {}
+ email=str(p.get('email','')).strip().lower();password=str(p.get('password',''))
+ name=str(p.get('name','')).strip();role=p.get('role','meistars')
+ if '@' not in email or not name or len(password)<12:return error('Norādiet vārdu, e-pastu un paroli vismaz 12 zīmes')
+ if role not in ROLES:return error('Nepareiza loma')
+ if g.db.query(User).filter_by(email=email).first():return error('E-pasts jau tiek izmantots',409)
+ u=User(name=name,email=email,password=generate_password_hash(password),role=role,approved=bool(p.get('approved',True)),active=bool(p.get('active',True)),department=str(p.get('department',''))[:120],position=str(p.get('position',''))[:120])
+ g.db.add(u);g.db.flush();audit('admin_user_create',u.id,json.dumps({'email':email,'role':role}));g.db.commit()
+ return jsonify(json_user(u)),201
+
+@bp.post('/admin/users/<int:uid>/password')
+@auth
+def admin_user_password(uid):
+ if g.user.role!='administrators':return error('Tikai administrators',403)
+ u=g.db.get(User,uid)
+ if not u:return error('Nav atrasts',404)
+ password=str((request.get_json(silent=True) or {}).get('password',''))
+ if len(password)<12:return error('Parolei jābūt vismaz 12 zīmēm',400)
+ u.password=generate_password_hash(password)
+ g.db.query(Token).filter(Token.user_id==uid,Token.user_id!=g.user.id).delete(synchronize_session=False)
+ audit('admin_password_reset',uid);g.db.commit()
+ return jsonify(message='Parole nomainīta')
+
 @bp.get('/objects')
 @auth
 def objects():
